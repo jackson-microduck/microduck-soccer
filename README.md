@@ -4,9 +4,32 @@ Online 3v3-style soccer for Jackson and friends. Everyone plays as **Microduck**
 
 The robot meshes are **CC BY-NC-SA 4.0**. This game is a non-commercial fan project. Do not charge money for it or put ads on it. See `NOTICE.md`.
 
+## Play on a Mac
+
+You need **Node.js 22.5 or newer** (the current Node 22 LTS is fine). The game stores accounts with Node's built-in SQLite, so `npm install` does not compile anything. That works on Apple Silicon (`darwin-arm64`) and Intel Macs (`darwin-x64`).
+
+1. Install Node if `node -v` is missing or older than 22.5. On Apple Silicon, download the **macOS ARM64** installer from [https://nodejs.org](https://nodejs.org) (the 22 LTS button), or run `brew install node@22`.
+2. In Terminal:
+
+```bash
+git clone https://origin.cursor.com/git/jackson-carpenter/tmp-4c994e70bd034e3d.git
+cd tmp-4c994e70bd034e3d
+node -v
+npm install
+npm start
+```
+
+3. Open [http://127.0.0.1:8741](http://127.0.0.1:8741).
+
+`node -v` should print `v22.5` or higher before `npm install`. Leave the Terminal window open while you play. Stop the game with Control-C.
+
+Friends on the same Wi-Fi can open `http://THAT-MAC-IP:8741`. Find the IP in System Settings → Network. If a phone cannot connect, allow incoming connections for Node when macOS asks.
+
+Accounts are saved in `data/league.sqlite` in this folder.
+
 ## Play on your computer
 
-You need **Node.js 22** or newer. Check with `node -v`.
+You need **Node.js 22.5** or newer. Check with `node -v`.
 
 ```bash
 npm install
@@ -60,7 +83,8 @@ The free server sleeps after nobody has visited for a while. The first open afte
 
 - Sign up with a username and password. No email. Passwords are stored scrambled. The player directory shows usernames, ranks, and stats only.
 - Make a club, share its code, or invite a friend from the directory. They accept before they join.
-- Play **1v1**, **2v2**, or **3v3**. Queue for a ranked match, or create a private room. Club matches can invite clubmates. Each invitee gets an in-app note (and a browser alert, if they allowed it) that lists the other people invited.
+- **Play vs Bots** from the match screen. Pick 1v1, 2v2, or 3v3, then Easy, Medium, or Hard. Computer ducks fill the empty spots on your team and the other team. They chase, pass, dribble, shoot, sprint, spin, and slide. In 3v3 their goalie dives. Bot matches do not change your rating. In 3v3 you can tick "I will play goalie" before you start.
+- Play **1v1**, **2v2**, or **3v3** against friends too. Queue for a ranked match, or create a private room. Club matches can invite clubmates. Each invitee gets an in-app note (and a browser alert, if they allowed it) that lists the other people invited.
 - Pick a **3 minute** or **5 minute** match before you queue or create the room.
 - The ball **locks** to you when you take it. Opponents **slide** to knock it loose. A missed slide stuns you for a moment. **Spin** (Q, or the Spin button) is a short dodge: if a slide arrives during the spin, it misses. Both moves have a cooldown.
 - **Sprint** is Shift, or hold the Sprint button. A stamina bar drains while you sprint and refills when you stop. Sprinting with the ball is slower.

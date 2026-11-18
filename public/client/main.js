@@ -30,6 +30,8 @@ const state = {
   minutes: 3,
   clubOnly: false,
   practice: false,
+  difficulty: 'medium',
+  botGoalie: false,
   toast: '',
 }
 
@@ -383,13 +385,13 @@ function homeCard() {
   wrap.className = 'layout'
   const hero = card()
   hero.append(h('h2', `Hey ${state.me.username}`))
-  hero.append(p('Queue a ranked match, or open a private room for your club. The ball sticks when you take it. Slide to steal it. Spin to slip a tackle.'))
+  hero.append(p('Play a whole match against computer ducks, queue ranked, or open a private room for your club. The ball sticks when you take it. Slide to steal it. Spin to slip a tackle.'))
   const slot = document.createElement('div')
   slot.id = 'hero-slot'
   const actions = document.createElement('div')
   actions.className = 'actions'
   actions.append(
-    button('Play', 'primary', () => { state.screen = 'lobby'; state.error = ''; render() }),
+    button('Play vs bots', 'primary', () => { state.screen = 'lobby'; state.error = ''; render() }),
     button('Club', 'ghost', () => { state.screen = 'club'; render() }),
     button('Find friends', 'ghost', () => { state.screen = 'directory'; loadDirectory(); render() }),
     button('Controls', 'ghost', () => openHelp(hero)),
@@ -724,7 +726,7 @@ function lobbyCard() {
     return box
   }
   if (state.room) return roomCard(box)
-  box.append(p('Ranked queue matches players by rating and balances the teams. A private room can be a club match with invites.'))
+  box.append(p('Play vs Bots fills both teams with computer ducks and does not change your rating. Ranked queue matches people by rating. A private room can be a club match with invites.'))
   box.append(h('h3', 'Mode'))
   const modes = document.createElement('div')
   modes.className = 'modes'
@@ -746,6 +748,24 @@ function lobbyCard() {
     b.addEventListener('click', () => { state.minutes = value; render() })
     minutes.append(b)
   }
+  const levels = document.createElement('div')
+  levels.className = 'modes'
+  for (const level of ['easy', 'medium', 'hard']) {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = `minute${state.difficulty === level ? ' on' : ''}`
+    b.textContent = level[0].toUpperCase() + level.slice(1)
+    b.addEventListener('click', () => { state.difficulty = level; render() })
+    levels.append(b)
+  }
+  const botGoalie = document.createElement('label')
+  botGoalie.className = 'check'
+  const botGoalieInput = document.createElement('input')
+  botGoalieInput.type = 'checkbox'
+  botGoalieInput.checked = state.botGoalie && state.mode === '3v3'
+  botGoalieInput.disabled = state.mode !== '3v3'
+  botGoalieInput.addEventListener('change', () => { state.botGoalie = botGoalieInput.checked })
+  botGoalie.append(botGoalieInput, document.createTextNode(state.mode === '3v3' ? 'I will play goalie against the bots' : 'Goalies are only in 3v3'))
   const club = document.createElement('label')
   club.className = 'check'
   const clubInput = document.createElement('input')
@@ -765,7 +785,16 @@ function lobbyCard() {
   const actions = document.createElement('div')
   actions.className = 'actions'
   actions.append(
-    button('Queue ranked', 'primary', () => {
+    button('Play vs bots', 'primary', () => {
+      send({
+        t: 'bots',
+        mode: state.mode,
+        minutes: state.minutes,
+        difficulty: state.difficulty,
+        goalie: state.botGoalie && state.mode === '3v3',
+      })
+    }),
+    button('Queue ranked', 'ghost', () => {
       send({ t: 'queue', mode: state.mode, minutes: state.minutes })
     }),
     button('Create room', 'ghost', () => {
@@ -775,7 +804,7 @@ function lobbyCard() {
   const join = document.createElement('input')
   join.placeholder = 'Room code'
   join.maxLength = 6
-  box.append(modes, h('h3', 'Length'), minutes, club, practice, err, actions, join, button('Join code', 'ghost', () => {
+  box.append(modes, h('h3', 'Length'), minutes, h('h3', 'Bot difficulty'), levels, botGoalie, club, practice, err, actions, join, button('Join code', 'ghost', () => {
     send({ t: 'join', code: join.value.trim().toUpperCase() })
   }))
   return box
@@ -855,7 +884,11 @@ function resultsCard() {
   score.className = 'lede'
   score.textContent = `${result.score.A} – ${result.score.B}`
   box.append(score)
-  box.append(p(result.ranked ? 'Rating updated from the result, goals, and assists.' : 'Practice match. Rating stays the same.'))
+  box.append(p(result.ranked
+    ? 'Rating updated from the result, goals, and assists.'
+    : result.difficulty
+      ? `Bot match (${result.difficulty}). Rating stays the same.`
+      : 'Practice match. Rating stays the same.'))
   const list = document.createElement('div')
   list.className = 'list'
   for (const player of result.players) {
@@ -911,7 +944,12 @@ function updateHud(snap) {
   const stamina = me ? me.stamina : 100
   fill.style.width = `${Math.max(0, Math.min(100, stamina))}%`
   fill.parentElement.classList.toggle('low', stamina < 20)
-  document.getElementById('club-line').textContent = snap.clubName ? snap.clubName : (snap.ranked ? 'Ranked' : 'Practice')
+  const level = snap.difficulty ? snap.difficulty[0].toUpperCase() + snap.difficulty.slice(1) : ''
+  document.getElementById('club-line').textContent = snap.clubName
+    ? snap.clubName
+    : level
+      ? `Bots · ${level}`
+      : (snap.ranked ? 'Ranked' : 'Practice')
   if (snap.phase === 'celebrate') {
     banner.classList.remove('hidden')
     const mine = me && me.team === snap.celebrateTeam

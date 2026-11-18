@@ -184,6 +184,7 @@ export function createMatch({
   homeLogo = null,
   awayLogo = null,
   clubName = null,
+  difficulty = null,
 }) {
   if (!MODES[mode]) throw new Error('Unknown mode')
   if (!MATCH_MINUTES.includes(minutes) && minutes !== 0) {
@@ -216,6 +217,7 @@ export function createMatch({
     homeLogo,
     awayLogo,
     clubName,
+    difficulty: difficulty || null,
     over: false,
     players: made,
     ball: {
@@ -875,6 +877,7 @@ export function snapshot(match) {
     homeLogo: match.homeLogo,
     awayLogo: match.awayLogo,
     clubName: match.clubName,
+    difficulty: match.difficulty || null,
     field: { length: match.length, width: match.width, goalW: match.goalW, goalH: match.goalH },
     ball: {
       x: r(match.ball.x),

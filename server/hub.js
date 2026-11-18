@@ -9,7 +9,7 @@ import {
   step,
 } from '../public/shared/game.js'
 import { createNotification, getUserById, persistResult } from './db.js'
-import { botRoster, driveBots } from './bots.js'
+import { BOT_DIFFICULTIES, botRoster, driveBots } from './bots.js'
 import { randomCode } from './auth.js'
 
 const TICK = 1 / 30
@@ -114,7 +114,7 @@ export function createHub(db) {
     if (conn) send(conn.ws, { t: 'note', note })
   }
 
-  function beginMatch(humanConns, { mode, minutes, clubName, clubLogo, fill }) {
+  function beginMatch(humanConns, { mode, minutes, clubName, clubLogo, fill, difficulty, botMatch }) {
     const need = MODES[mode].players
     const humans = humanConns.map((conn) => ({
       ...fresh(conn.user.id),
@@ -132,7 +132,9 @@ export function createHub(db) {
       for (const side of ['A', 'B']) {
         const group = teams[side]
         const claim = group.find((p) => p.wantGoalie && !p.bot)
-        const keeper = claim || [...group].sort((a, b) => a.rating - b.rating)[0]
+        let keeper = claim
+        if (!keeper && botMatch) keeper = group.find((p) => p.bot)
+        if (!keeper) keeper = [...group].sort((a, b) => a.rating - b.rating)[0]
         for (const p of group) p.goalie = p === keeper
       }
     }
@@ -153,6 +155,7 @@ export function createHub(db) {
       homeLogo: clubLogo || null,
       awayLogo: clubLogo || null,
       clubName: clubName || null,
+      difficulty: botMatch ? difficulty : (bots.length ? 'medium' : null),
     })
     const sockets = new Set()
     const live = { id, match, sockets, done: false }
@@ -190,6 +193,7 @@ export function createHub(db) {
       score: live.match.score,
       mode: live.match.mode,
       minutes: live.match.minutes,
+      difficulty: live.match.difficulty,
       clubName: live.match.clubName,
       players: settled.map((p) => ({
         id: p.id,
@@ -260,6 +264,26 @@ export function createHub(db) {
     if (msg.t === 'leave-queue') {
       leaveQueue(conn)
       send(conn.ws, { t: 'queue', count: 0, need: 0 })
+      return
+    }
+    if (msg.t === 'bots') {
+      const mode = msg.mode
+      const minutes = Number(msg.minutes)
+      const difficulty = msg.difficulty
+      if (!MODES[mode] || ![3, 5].includes(minutes)) return fail(conn, 'Pick 1v1, 2v2, or 3v3 and a 3 or 5 minute match.')
+      if (!BOT_DIFFICULTIES.includes(difficulty)) return fail(conn, 'Pick Easy, Medium, or Hard.')
+      if (conn.matchId) return fail(conn, 'You are already in a match.')
+      leaveQueue(conn)
+      leaveRoom(conn)
+      conn.wantGoalie = !!msg.goalie && mode === '3v3'
+      const live = beginMatch([conn], {
+        mode,
+        minutes,
+        fill: true,
+        difficulty,
+        botMatch: true,
+      })
+      if (!live) return fail(conn, 'Could not start the bot match.')
       return
     }
     if (msg.t === 'host') {
