@@ -1,0 +1,269 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import {
+  CELEBRATION_SECONDS,
+  SPRINT,
+  SPRINT_BALL,
+  balanceTeams,
+  createMatch,
+  integrateMover,
+  rankFor,
+  ratingDelta,
+  step,
+} from '../public/shared/game.js'
+
+function players(n, ratings) {
+  return Array.from({ length: n }, (_, i) => ({
+    id: String(i + 1),
+    name: `P${i + 1}`,
+    rating: ratings ? ratings[i] : 1000 + i,
+    color: '#ff6a1a',
+  }))
+}
+
+function duel() {
+  const match = createMatch({
+    mode: '1v1',
+    minutes: 3,
+    players: [
+      { id: '1', name: 'Ada', rating: 1000, team: 'A', color: '#ff6a1a' },
+      { id: '2', name: 'Bea', rating: 1000, team: 'B', color: '#2f8cff' },
+    ],
+  })
+  match.phase = 'play'
+  match.phaseT = 0
+  return match
+}
+
+test('ball locks onto the player who has it and follows a turn', () => {
+  const match = duel()
+  const ada = match.players[0]
+  match.ball.owner = ada.id
+  ada.x = 0.4
+  ada.z = -0.2
+  ada.yaw = Math.PI / 2
+  step(match, 1 / 30)
+  assert.equal(match.ball.owner, ada.id)
+  assert.ok(Math.abs(match.ball.x - (ada.x + Math.sin(ada.yaw) * 0.23)) < 0.05)
+  assert.ok(match.ball.z > ada.z - 0.05)
+})
+
+test('a kick leaves the foot and can score in the small goal', () => {
+  const match = duel()
+  const ada = match.players[0]
+  const bea = match.players[1]
+  bea.x = 1.6
+  bea.z = 0
+  ada.x = 0
+  ada.z = 2.1
+  ada.yaw = 0
+  match.ball.owner = ada.id
+  ada.pressed.kick = true
+  let scored = false
+  for (let i = 0; i < 90; i++) {
+    const events = step(match, 1 / 30)
+    if (events.some((e) => e.type === 'goal' && e.team === 'A')) scored = true
+  }
+  assert.equal(scored, true)
+  assert.equal(match.score.A, 1)
+  assert.equal(ada.goals, 1)
+  assert.equal(match.phase, 'celebrate')
+})
+
+test('a ball over the crossbar is not a goal', () => {
+  const match = duel()
+  const hl = match.length / 2
+  match.ball.owner = null
+  match.ball.x = 0
+  match.ball.y = 0.5
+  match.ball.z = hl - 0.08
+  match.ball.vz = 4
+  for (let i = 0; i < 20; i++) step(match, 1 / 30)
+  assert.equal(match.score.A, 0)
+  assert.equal(match.score.B, 0)
+})
+
+test('celebration lasts 8 seconds and the other team waits', () => {
+  const match = duel()
+  const ada = match.players[0]
+  const bea = match.players[1]
+  ada.x = 0
+  ada.z = 2.1
+  ada.yaw = 0
+  bea.x = 1.5
+  match.ball.owner = ada.id
+  ada.pressed.kick = true
+  let goal = false
+  for (let i = 0; i < 40 && !goal; i++) {
+    goal = step(match, 1 / 30).some((e) => e.type === 'goal')
+  }
+  assert.equal(goal, true)
+  assert.equal(match.celebration, CELEBRATION_SECONDS)
+  const z = bea.z
+  bea.cmd.mz = -1
+  let elapsed = 0
+  while (match.phase === 'celebrate' && elapsed < 9) {
+    step(match, 1 / 30)
+    elapsed += 1 / 30
+  }
+  assert.ok(elapsed > 7.5 && elapsed < 8.4)
+  assert.equal(match.phase, 'countdown')
+  assert.ok(Math.abs(bea.z - z) < 0.08)
+})
+
+test('slide tackle steals, a miss stuns, and a timed spin makes the tackle miss', () => {
+  const miss = duel()
+  const tackler = miss.players[1]
+  tackler.x = 1.4
+  tackler.z = -1
+  tackler.yaw = 0
+  tackler.pressed.slide = true
+  let stunned = false
+  for (let i = 0; i < 40; i++) {
+    step(miss, 1 / 30)
+    if (tackler.stun > 0) stunned = true
+  }
+  assert.equal(stunned, true)
+  assert.ok(tackler.slideCd > 0 || stunned)
+
+  const hit = duel()
+  const ada = hit.players[0]
+  const bea = hit.players[1]
+  ada.x = 0
+  ada.z = 0
+  ada.yaw = 0
+  hit.ball.owner = ada.id
+  bea.x = 0
+  bea.z = -0.2
+  bea.yaw = 0
+  bea.pressed.slide = true
+  let stolen = false
+  for (let i = 0; i < 20; i++) {
+    const events = step(hit, 1 / 30)
+    if (events.some((e) => e.type === 'steal')) stolen = true
+  }
+  assert.equal(stolen, true)
+  assert.equal(hit.ball.owner, bea.id)
+
+  const dodge = duel()
+  const carrier = dodge.players[0]
+  const slider = dodge.players[1]
+  carrier.x = 0
+  carrier.z = 0
+  dodge.ball.owner = carrier.id
+  carrier.pressed.spin = true
+  slider.x = 0.05
+  slider.z = -0.05
+  slider.yaw = 0
+  slider.pressed.slide = true
+  let dodged = false
+  for (let i = 0; i < 30; i++) {
+    const events = step(dodge, 1 / 30)
+    if (events.some((e) => e.type === 'dodge')) dodged = true
+  }
+  assert.equal(dodged, true)
+  assert.equal(dodge.ball.owner, carrier.id)
+  assert.ok(slider.stun > 0)
+})
+
+test('spin cannot be spammed during its cooldown', () => {
+  const match = duel()
+  const ada = match.players[0]
+  match.ball.owner = ada.id
+  ada.pressed.spin = true
+  step(match, 1 / 30)
+  assert.ok(ada.spinning > 0 || ada.spinCd > 0)
+  while (ada.spinning > 0) step(match, 1 / 30)
+  assert.ok(ada.spinCd > 1)
+  ada.pressed.spin = true
+  step(match, 1 / 30)
+  assert.equal(ada.spinning, 0)
+})
+
+test('sprinting with the ball is slower and stamina drains then refills', () => {
+  function pace(withBall) {
+    const match = duel()
+    const ada = match.players[0]
+    if (!withBall) match.ball.owner = null
+    else match.ball.owner = ada.id
+    ada.cmd.mx = 0
+    ada.cmd.mz = 1
+    ada.cmd.sprint = true
+    for (let i = 0; i < 20; i++) integrateMover(ada, 1 / 30, match)
+    return ada
+  }
+  const free = pace(false)
+  const carrying = pace(true)
+  assert.ok(Math.hypot(free.vx, free.vz) > Math.hypot(carrying.vx, carrying.vz) + 0.2)
+  assert.ok(Math.hypot(free.vx, free.vz) > SPRINT * 0.7)
+  assert.ok(Math.hypot(carrying.vx, carrying.vz) < SPRINT_BALL + 0.15)
+  assert.ok(free.stamina < 90)
+
+  const match = duel()
+  const ada = match.players[0]
+  match.ball.owner = null
+  ada.stamina = 40
+  ada.cmd = { mx: 0, mz: 0, sprint: false }
+  for (let i = 0; i < 30; i++) integrateMover(ada, 1 / 30, match)
+  assert.ok(ada.stamina > 55)
+})
+
+test('goalies exist only in 3v3 and a pass can earn an assist', () => {
+  const small = createMatch({ mode: '2v2', minutes: 5, players: players(4).map((p, i) => ({ ...p, team: i < 2 ? 'A' : 'B' })) })
+  assert.equal(small.players.some((p) => p.goalie), false)
+  const big = createMatch({ mode: '3v3', minutes: 3, players: players(6).map((p, i) => ({ ...p, team: i < 3 ? 'A' : 'B' })) })
+  assert.equal(big.players.filter((p) => p.goalie && p.team === 'A').length, 1)
+  assert.equal(big.players.filter((p) => p.goalie && p.team === 'B').length, 1)
+
+  const match = createMatch({
+    mode: '2v2',
+    minutes: 3,
+    players: players(4).map((p, i) => ({ ...p, team: i < 2 ? 'A' : 'B' })),
+  })
+  match.phase = 'play'
+  const passer = match.players[0]
+  const scorer = match.players[1]
+  for (const p of match.players.slice(2)) { p.x = 2; p.z = 0 }
+  passer.x = 0
+  passer.z = 1
+  passer.yaw = 0
+  scorer.x = 0
+  scorer.z = 2.3
+  scorer.yaw = 0
+  match.ball.owner = passer.id
+  passer.pressed.pass = true
+  step(match, 1 / 30)
+  match.ball.owner = scorer.id
+  match.ball.lastTouch = { id: scorer.id, team: 'A', t: match.elapsed }
+  scorer.pressed.kick = true
+  let assist = false
+  for (let i = 0; i < 50; i++) {
+    const events = step(match, 1 / 30)
+    if (events.some((e) => e.type === 'goal' && e.assist === scorer.name)) assist = false
+    if (events.some((e) => e.type === 'goal' && e.assist === passer.name)) assist = true
+  }
+  assert.equal(assist, true)
+  assert.equal(passer.assists, 1)
+  assert.equal(scorer.goals, 1)
+})
+
+test('rating rewards goals and assists, and teams get balanced by rank', () => {
+  const plain = ratingDelta({ teamAvg: 1000, oppAvg: 1000, won: true, draw: false, goals: 0, assists: 0 })
+  const star = ratingDelta({ teamAvg: 1000, oppAvg: 1000, won: true, draw: false, goals: 2, assists: 1 })
+  const quietLoss = ratingDelta({ teamAvg: 1000, oppAvg: 1000, won: false, draw: false, goals: 0, assists: 0 })
+  const braveLoss = ratingDelta({ teamAvg: 1000, oppAvg: 1000, won: false, draw: false, goals: 2, assists: 1 })
+  assert.ok(star > plain)
+  assert.ok(braveLoss > quietLoss)
+  assert.ok(plain > 0)
+  assert.ok(quietLoss < 0)
+  const teams = balanceTeams([
+    { id: 'a', rating: 1500 },
+    { id: 'b', rating: 1400 },
+    { id: 'c', rating: 1100 },
+    { id: 'd', rating: 1000 },
+  ])
+  const sum = (list) => list.reduce((s, p) => s + p.rating, 0)
+  assert.ok(Math.abs(sum(teams.A) - sum(teams.B)) <= 200)
+  assert.equal(rankFor(1000), 'Hatchling')
+  assert.equal(rankFor(2100), 'Legend')
+})
