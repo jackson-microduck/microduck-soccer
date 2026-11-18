@@ -86,7 +86,7 @@ The free server sleeps after nobody has visited for a while. The first open afte
 - **Play vs Bots** from the match screen. Pick 1v1, 2v2, or 3v3, then Easy, Medium, or Hard. Computer ducks fill the empty spots on your team and the other team. They chase, pass, dribble, shoot, sprint, spin, and slide. In 3v3 their goalie dives. Bot matches do not change your rating. In 3v3 you can tick "I will play goalie" before you start.
 - Play **1v1**, **2v2**, or **3v3** against friends too. Queue for a ranked match, or create a private room. Club matches can invite clubmates. Each invitee gets an in-app note (and a browser alert, if they allowed it) that lists the other people invited.
 - Pick a **3 minute** or **5 minute** match before you queue or create the room.
-- The ball **locks** to you when you take it. Opponents **slide** to knock it loose. A missed slide stuns you for a moment. **Spin** (Q, or the Spin button) is a short dodge: if a slide arrives during the spin, it misses. Both moves have a cooldown.
+- The ball **locks** to you when you take it. Opponents **slide** to knock it loose. A missed slide stuns you for a moment. **Spin** (P, or the Spin button) is a short dodge: if a slide arrives during the spin, it misses. Both moves have a cooldown.
 - **Sprint** is Shift, or hold the Sprint button. A stamina bar drains while you sprint and refills when you stop. Sprinting with the ball is slower.
 - **Goalies only in 3v3.** One duck per side can dive and catch. 1v1 and 2v2 have no goalies.
 - Goals are about two to three ducks wide and one duck tall. After a goal the scoring side gets **8 seconds** to celebrate (spin, quack, head bob, sit-and-stand, roller glide). The other side waits, then it is kickoff.
@@ -101,7 +101,7 @@ The free server sleeps after nobody has visited for a while. The first open afte
 | Kick | K or Space | Kick |
 | Pass | J | Pass |
 | Slide tackle | C | Slide |
-| Dribble spin | Q | Spin |
+| Dribble spin | P | Spin |
 | Goalie dive | G | Dive (goalies, 3v3) |
 | Celebrate | 1 spin, 2 quack, 3 bob, 4 sit, 5 glide | Those buttons after a goal |
 

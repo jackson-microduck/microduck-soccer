@@ -1184,7 +1184,7 @@ function helpNode() {
     'Sprint: hold Shift. The stamina bar drains, then refills when you let go. Sprinting with the ball is slower than sprinting without it.',
     'Kick: K or Space. Pass: J.',
     'Slide tackle: C. If you miss, you are stunned briefly and the move goes on cooldown.',
-    'Dribble spin: Q. During the spin, and for a moment after, nobody can take the ball. A slide into it misses and stuns. It has a cooldown.',
+    'Dribble spin: P. During the spin, and for a moment after, nobody can take the ball. A slide into it misses and stuns. It has a cooldown.',
     'Goalie dive (3v3 only): G. Dive to catch a shot.',
     'After a goal, the scoring side celebrates for 8 seconds: 1 spin, 2 quack, 3 head bob, 4 sit and stand, 5 roller glide.',
   ]) {
@@ -1237,7 +1237,7 @@ function setupInput() {
     if (e.code === 'KeyK' || e.code === 'Space') { input.kick += 1; playKick() }
     if (e.code === 'KeyJ') input.pass += 1
     if (e.code === 'KeyC') input.slide += 1
-    if (e.code === 'KeyQ') input.spin += 1
+    if (e.code === 'KeyP') input.spin += 1
     if (e.code === 'KeyG') input.dive += 1
     const emotes = { Digit1: 'spin', Digit2: 'quack', Digit3: 'bob', Digit4: 'sit', Digit5: 'glide' }
     if (emotes[e.code]) {
