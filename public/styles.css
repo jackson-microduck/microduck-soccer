@@ -26,6 +26,16 @@ button { cursor: pointer; }
 img { display: block; max-width: 100%; }
 
 .hidden { display: none !important; }
+.scheme-picker {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(29, 36, 48, 0.45);
+}
+.scheme-picker .card { width: min(440px, 100%); }
 
 .top {
   display: flex;

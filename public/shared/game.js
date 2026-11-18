@@ -95,7 +95,24 @@ export function balanceTeams(players) {
 }
 
 function blankCommand() {
-  return { mx: 0, mz: 0, sprint: false }
+  return { mx: 0, mz: 0, sprint: false, sens: 1 }
+}
+
+// forward +1 is W / stick up (away from the camera, toward the far goal).
+// strafe +1 is D / stick right (screen right). The strafe axis is the camera's right.
+export function cameraMove(yaw, forward, strafe) {
+  const fX = Math.sin(yaw)
+  const fZ = Math.cos(yaw)
+  const rX = -Math.cos(yaw)
+  const rZ = Math.sin(yaw)
+  let mx = fX * forward + rX * strafe
+  let mz = fZ * forward + rZ * strafe
+  const mag = Math.hypot(mx, mz)
+  if (mag > 1) {
+    mx /= mag
+    mz /= mag
+  }
+  return { mx, mz }
 }
 
 export function makePlayer(raw, team) {
@@ -300,6 +317,8 @@ export function setInput(match, id, msg) {
     p.cmd.mz /= mag
   }
   p.cmd.sprint = !!msg.sprint
+  const sens = Number(msg.sens)
+  p.cmd.sens = Number.isFinite(sens) ? clamp(sens, 0.7, 1.3) : 1
   if (Number.isFinite(msg.seq)) p.ack = msg.seq | 0
   for (const key of ['kick', 'pass', 'slide', 'spin', 'dive']) {
     const value = msg[key]
@@ -447,7 +466,8 @@ export function integrateMover(p, dt, match) {
     p.sprinting = false
     p.stamina = Math.min(STAMINA_MAX, p.stamina + STAMINA_REGEN * dt * 0.35)
   } else if (frozen || (mx === 0 && mz === 0)) {
-    const stop = Math.min(1, 22 * dt)
+    const sens = clamp(p.cmd.sens || 1, 0.7, 1.3)
+    const stop = Math.min(1, 12 * sens * dt)
     p.vx += (0 - p.vx) * stop
     p.vz += (0 - p.vz) * stop
     p.sprinting = false
@@ -463,12 +483,13 @@ export function integrateMover(p, dt, match) {
       p.stamina = Math.min(STAMINA_MAX, p.stamina + STAMINA_REGEN * dt)
     }
     const speed = p.sprinting ? (ballOwned ? SPRINT_BALL : SPRINT) : WALK
+    const sens = clamp(p.cmd.sens || 1, 0.7, 1.3)
     const targetYaw = Math.atan2(mx, mz)
-    const turn = ballOwned ? 28 : 20
+    const turn = (ballOwned ? 16 : 12) * sens
     p.yaw = lerpAngle(p.yaw, targetYaw, 1 - Math.exp(-turn * dt))
     const tvx = mx * speed
     const tvz = mz * speed
-    const k = 1 - Math.exp((ballOwned ? -22 : -18) * dt)
+    const k = 1 - Math.exp((ballOwned ? -13 : -11) * sens * dt)
     p.vx += (tvx - p.vx) * k
     p.vz += (tvz - p.vz) * k
   }

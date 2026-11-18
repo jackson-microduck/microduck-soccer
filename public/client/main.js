@@ -1,7 +1,7 @@
 import { createWorld } from './world.js'
 import { badgeDataUrl, mountLogoStudio, safeLogo } from './logo.js'
 import { playGoal, playKick, playQuack, playWhistle, unlockAudio } from './audio.js'
-import { rankFor } from '/shared/game.js'
+import { cameraMove, rankFor } from '/shared/game.js'
 
 const app = document.getElementById('app')
 const matchEl = document.getElementById('match')
@@ -148,18 +148,12 @@ function onNet(msg) {
     return
   }
   if (msg.t === 'start') {
-    state.you = msg.you
-    state.snap = msg.snap
-    state.result = null
-    state.screen = 'match'
-    showMatch()
-    world.setMatch(msg.you.id)
-    world.pushSnap(msg.snap, currentStick())
-    updateHud(msg.snap)
-    playWhistle()
+    state.pendingStart = msg
+    showSchemePicker()
     return
   }
   if (msg.t === 'snap') {
+    if (state.pendingStart) state.pendingStart.snap = msg
     state.snap = msg
     if (state.screen === 'match') {
       world.pushSnap(msg, currentStick())
@@ -808,6 +802,18 @@ function lobbyCard() {
   practiceInput.checked = state.practice
   practiceInput.addEventListener('change', () => { state.practice = practiceInput.checked })
   practice.append(practiceInput, document.createTextNode('Fill empty spots with practice ducks (unranked)'))
+  const sensLabel = document.createElement('label')
+  sensLabel.textContent = `Sensitivity ${readSens().toFixed(2)} · saved on this device`
+  const sens = document.createElement('input')
+  sens.type = 'range'
+  sens.min = '0.7'
+  sens.max = '1.3'
+  sens.step = '0.05'
+  sens.value = String(readSens())
+  sens.addEventListener('input', () => {
+    localStorage.setItem('md-sensitivity', sens.value)
+    sensLabel.textContent = `Sensitivity ${readSens().toFixed(2)} · saved on this device`
+  })
   const err = p(state.error, 'error')
   const actions = document.createElement('div')
   actions.className = 'actions'
@@ -831,7 +837,7 @@ function lobbyCard() {
   const join = document.createElement('input')
   join.placeholder = 'Room code'
   join.maxLength = 6
-  box.append(modes, h('h3', 'Length'), minutes, h('h3', 'Bot difficulty'), levels, botGoalie, club, practice, err, actions, join, button('Join code', 'ghost', () => {
+  box.append(modes, h('h3', 'Length'), minutes, h('h3', 'Bot difficulty'), levels, botGoalie, club, practice, sensLabel, sens, err, actions, join, button('Join code', 'ghost', () => {
     send({ t: 'join', code: join.value.trim().toUpperCase() })
   }))
   return box
@@ -1049,25 +1055,21 @@ function buildPad() {
 }
 
 function currentStick() {
-  let mx = 0
-  let mz = 0
   const yaw = state.screen === 'match' && world ? world.aimYaw : (camYaw || 0)
-  const fX = Math.sin(yaw)
-  const fZ = Math.cos(yaw)
-  const rX = Math.cos(yaw)
-  const rZ = -Math.sin(yaw)
-  if (keys.has('KeyW') || keys.has('ArrowUp')) { mx += fX; mz += fZ }
-  if (keys.has('KeyS') || keys.has('ArrowDown')) { mx -= fX; mz -= fZ }
-  if (keys.has('KeyD') || keys.has('ArrowRight')) { mx += rX; mz += rZ }
-  if (keys.has('KeyA') || keys.has('ArrowLeft')) { mx -= rX; mz -= rZ }
+  let forward = 0
+  let strafe = 0
+  if (keys.has('KeyW') || keys.has('ArrowUp')) forward += 1
+  if (keys.has('KeyS') || keys.has('ArrowDown')) forward -= 1
+  if (keys.has('KeyD') || keys.has('ArrowRight')) strafe += 1
+  if (keys.has('KeyA') || keys.has('ArrowLeft')) strafe -= 1
   if (joy.active) {
-    mx += fX * -joy.y + rX * joy.x
-    mz += fZ * -joy.y + rZ * joy.x
+    forward += -joy.y
+    strafe += joy.x
   }
-  const mag = Math.hypot(mx, mz)
-  if (mag > 1) { mx /= mag; mz /= mag }
+  const move = cameraMove(yaw, forward, strafe)
   return {
-    mx, mz,
+    mx: move.mx,
+    mz: move.mz,
     sprint: input.sprint || keys.has('ShiftLeft') || keys.has('ShiftRight'),
     kick: input.kick,
     pass: input.pass,
@@ -1076,7 +1078,79 @@ function currentStick() {
     dive: input.dive,
     emote: input.emoteName,
     emoteId: input.emote,
+    sens: readSens(),
   }
+}
+
+function readSens() {
+  const n = Number(localStorage.getItem('md-sensitivity'))
+  return Number.isFinite(n) ? Math.min(1.3, Math.max(0.7, n)) : 1
+}
+
+function detectedScheme() {
+  return matchMedia('(pointer: coarse)').matches || window.innerWidth < 860 ? 'phone' : 'laptop'
+}
+
+function chosenScheme() {
+  const saved = localStorage.getItem('md-scheme')
+  return saved === 'laptop' || saved === 'phone' ? saved : detectedScheme()
+}
+
+function applyScheme(scheme) {
+  state.scheme = scheme
+  localStorage.setItem('md-scheme', scheme)
+  document.body.classList.toggle('touch', scheme === 'phone')
+}
+
+function showSchemePicker() {
+  let overlay = document.getElementById('scheme-picker')
+  if (!overlay) {
+    overlay = document.createElement('div')
+    overlay.id = 'scheme-picker'
+    overlay.className = 'scheme-picker'
+    document.body.append(overlay)
+  }
+  const pick = { value: chosenScheme() }
+  const card = document.createElement('div')
+  card.className = 'card'
+  card.append(h('h2', 'How are you playing?'))
+  card.append(p('Laptop uses the keyboard. Phone uses the joystick and buttons. This choice is remembered on this device.'))
+  const row = document.createElement('div')
+  row.className = 'modes'
+  const buttons = []
+  for (const [id, label] of [['laptop', 'Laptop controls'], ['phone', 'Phone controls']]) {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = `minute${pick.value === id ? ' on' : ''}`
+    b.textContent = label
+    b.addEventListener('click', () => {
+      pick.value = id
+      for (const other of buttons) other.classList.toggle('on', other === b)
+    })
+    buttons.push(b)
+    row.append(b)
+  }
+  card.append(row, button('Play', 'primary', () => {
+    applyScheme(pick.value)
+    overlay.classList.add('hidden')
+    const msg = state.pendingStart
+    state.pendingStart = null
+    if (msg) enterMatch(msg)
+  }))
+  overlay.replaceChildren(card)
+  overlay.classList.remove('hidden')
+}
+
+function enterMatch(msg) {
+  state.you = msg.you
+  state.snap = msg.snap
+  state.result = null
+  state.screen = 'match'
+  showMatch()
+  world.setMatch(msg.you.id)
+  world.pushSnap(msg.snap, currentStick())
+  updateHud(msg.snap)
+  playWhistle()
 }
 
 function flushInput() {
@@ -1090,6 +1164,10 @@ function flushInput() {
 }
 
 function syncTouch() {
+  if (state.screen === 'match' && state.scheme) {
+    document.body.classList.toggle('touch', state.scheme === 'phone')
+    return
+  }
   const coarse = matchMedia('(pointer: coarse)').matches || window.innerWidth < 860
   document.body.classList.toggle('touch', coarse)
 }
@@ -1207,7 +1285,7 @@ function setupInput() {
     const nx = dx / mag
     const ny = dy / mag
     const strength = Math.min(1, (mag - dead) / (max - dead))
-    const feel = Math.pow(strength, 0.72)
+    const feel = Math.pow(strength, 1.15 / readSens())
     joy.x = nx * feel
     joy.y = ny * feel
     const reach = (max - 26) * feel
