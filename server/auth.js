@@ -41,18 +41,26 @@ export function cleanUsername(value) {
   return name
 }
 
+// Returns the canonical data URL string, null to clear, or false when the
+// upload is not a small PNG/JPEG. Never a boolean true: node:sqlite cannot bind booleans.
 export function validLogo(dataUrl) {
   if (dataUrl == null || dataUrl === '') return null
-  if (typeof dataUrl !== 'string' || dataUrl.length > 180000) return false
-  const match = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl)
+  if (typeof dataUrl !== 'string') return false
+  const trimmed = dataUrl.trim()
+  if (trimmed.length > 1_500_000) return false
+  const match = /^data:image\/(png|jpe?g)(?:;charset=[^;,]+)?;base64,([A-Za-z0-9+/=\s]+)$/i.exec(trimmed)
   if (!match) return false
+  const b64 = match[2].replace(/\s+/g, '')
   let buf
   try {
-    buf = Buffer.from(match[2], 'base64')
+    buf = Buffer.from(b64, 'base64')
   } catch {
     return false
   }
-  if (buf.length < 32 || buf.length > 130000) return false
-  if (match[1] === 'png') return buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47
-  return buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff
+  if (buf.length < 32 || buf.length > 1_000_000) return false
+  const kind = match[1].toLowerCase()
+  const png = kind === 'png' && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47
+  const jpeg = kind !== 'png' && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff
+  if (!png && !jpeg) return false
+  return `data:image/${png ? 'png' : 'jpeg'};base64,${b64}`
 }

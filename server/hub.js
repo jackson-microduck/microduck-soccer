@@ -155,7 +155,7 @@ export function createHub(db) {
       homeLogo: clubLogo || null,
       awayLogo: clubLogo || null,
       clubName: clubName || null,
-      difficulty: botMatch ? difficulty : (bots.length ? 'medium' : null),
+      difficulty: botMatch ? difficulty : null,
     })
     const sockets = new Set()
     const live = { id, match, sockets, done: false }

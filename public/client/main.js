@@ -44,6 +44,7 @@ let camYaw = 0
 let joy = { x: 0, y: 0, active: false }
 let sent = ''
 const seenNotes = new Set()
+const outbox = []
 
 function hexOk(value) {
   return /^#[0-9a-f]{6}$/i.test(value || '')
@@ -55,8 +56,21 @@ async function api(url, body, method) {
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error || 'Something went wrong.')
+  const text = await res.text()
+  let data = {}
+  if (text) {
+    try {
+      data = JSON.parse(text)
+    } catch {
+      data = { error: text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240) }
+    }
+  }
+  if (!res.ok) {
+    const message = data && typeof data.error === 'string' && data.error
+      ? data.error
+      : (res.statusText || 'Something went wrong.')
+    throw new Error(message)
+  }
   return data
 }
 
@@ -72,19 +86,28 @@ function toast(text) {
 function connect() {
   if (!state.me) return
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-  ws = new WebSocket(`${proto}://${location.host}`)
-  ws.addEventListener('message', (ev) => {
+  const socket = new WebSocket(`${proto}://${location.host}`)
+  ws = socket
+  socket.addEventListener('open', () => {
+    if (ws !== socket) return
+    while (outbox.length) socket.send(JSON.stringify(outbox.shift()))
+  })
+  socket.addEventListener('message', (ev) => {
     let msg
     try { msg = JSON.parse(ev.data) } catch { return }
     onNet(msg)
   })
-  ws.addEventListener('close', () => {
-    if (state.me) setTimeout(connect, 1200)
+  socket.addEventListener('close', () => {
+    if (ws === socket && state.me) setTimeout(connect, 1200)
   })
 }
 
 function send(msg) {
   if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg))
+  else {
+    outbox.push(msg)
+    if (outbox.length > 20) outbox.shift()
+  }
 }
 
 function onNet(msg) {
@@ -709,10 +732,14 @@ function clubCard() {
     })
   }
   box.append(button('Leave club', 'danger', async () => {
-    await api('/api/clubs/leave', {})
-    state.club = null
-    await refreshMe()
-    render()
+    try {
+      await api('/api/clubs/leave', {})
+      state.club = null
+      await refreshMe()
+      render()
+    } catch (err) {
+      toast(err.message)
+    }
   }))
   return box
 }
@@ -1191,6 +1218,7 @@ function setupInput() {
 }
 
 async function logout() {
+  outbox.length = 0
   await api('/api/logout', {})
   state.me = null
   state.club = null

@@ -68,7 +68,7 @@ export function start(opts = {}) {
   const db = openDatabase(dbPath)
   const app = express()
   app.set('trust proxy', 1)
-  app.use(express.json({ limit: '320kb' }))
+  app.use(express.json({ limit: '2mb' }))
 
   function userFrom(req) {
     const token = readCookie(req, 'md')
@@ -90,6 +90,17 @@ export function start(opts = {}) {
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true, game: 'microduck-league' })
   })
+
+  if (process.env.ALLOW_TEST_HOOKS === '1') {
+    app.get('/api/test-boom', () => {
+      throw new Error('Boom from the server')
+    })
+  }
+
+  function routeId(value) {
+    const n = Number(value)
+    return Number.isInteger(n) && n > 0 ? n : null
+  }
 
   app.post('/api/signup', (req, res) => {
     const ip = req.ip || 'local'
@@ -211,7 +222,8 @@ export function start(opts = {}) {
   app.get('/api/clubs/:id', (req, res) => {
     const user = requireUser(req, res)
     if (!user) return
-    const club = clubSummary(db, Number(req.params.id))
+    const clubId = routeId(req.params.id)
+    const club = clubId ? clubSummary(db, clubId) : null
     if (!club) return res.status(404).json({ error: 'Club not found.' })
     if (user.club_id !== club.id) club.code = null
     res.json({ club })
@@ -267,9 +279,10 @@ export function start(opts = {}) {
   app.post('/api/notifications/:id/respond', (req, res) => {
     const user = requireUser(req, res)
     if (!user) return
-    const note = getNotification(db, Number(req.params.id))
+    const noteId = routeId(req.params.id)
+    const note = noteId ? getNotification(db, noteId) : null
     if (!note || note.payload == null) return res.status(404).json({ error: 'Invite not found.' })
-    const row = db.prepare('SELECT * FROM notifications WHERE id = ?').get(Number(req.params.id))
+    const row = db.prepare('SELECT * FROM notifications WHERE id = ?').get(noteId)
     if (!row || row.user_id !== user.id) return res.status(404).json({ error: 'Invite not found.' })
     if (row.status !== 'pending') return res.json({ notification: getNotification(db, row.id) })
     const action = req.body?.action === 'accept' ? 'accepted' : 'declined'
@@ -300,6 +313,11 @@ export function start(opts = {}) {
 
   app.use('/vendor/three', express.static(path.join(root, 'node_modules/three')))
   app.use(express.static(path.join(root, 'public')))
+  app.use((err, _req, res, next) => {
+    if (res.headersSent) return next(err)
+    const message = err instanceof Error && err.message ? err.message : 'Something went wrong.'
+    res.status(err.status || 500).json({ error: message })
+  })
 
   const server = http.createServer(app)
   const wss = new WebSocketServer({ server })

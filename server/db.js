@@ -69,12 +69,47 @@ CREATE TABLE IF NOT EXISTS match_players (
 );
 `
 
+function sqlParam(value, index) {
+  if (value === undefined || value === null) return null
+  if (typeof value === 'string' || typeof value === 'bigint') return value
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new TypeError(`SQLite parameter ${index + 1} is not a finite number.`)
+    }
+    return value
+  }
+  if (typeof value === 'boolean') {
+    throw new TypeError(`SQLite parameter ${index + 1} is a boolean. Bind a string, number, or null.`)
+  }
+  if (Buffer.isBuffer(value) || value instanceof Uint8Array) return value
+  throw new TypeError(`SQLite parameter ${index + 1} is ${value?.constructor?.name || typeof value}, which node:sqlite cannot bind.`)
+}
+
+function wrapDatabase(db) {
+  const prepare = db.prepare.bind(db)
+  db.prepare = (sql) => {
+    const stmt = prepare(sql)
+    const call = (method) => (...args) => stmt[method](...args.map((value, index) => sqlParam(value, index)))
+    return { run: call('run'), get: call('get'), all: call('all') }
+  }
+  return db
+}
+
+function migrate(db) {
+  // Version 1 is the original table set. CREATE IF NOT EXISTS above keeps an
+  // existing data/league.sqlite working without rewriting its rows.
+  const row = db.prepare('PRAGMA user_version').get()
+  const version = Number(row?.user_version || 0)
+  if (version < 1) db.exec('PRAGMA user_version = 1')
+}
+
 export function openDatabase(file) {
   if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true })
   const db = new DatabaseSync(file)
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;')
   db.exec(SCHEMA)
-  return db
+  migrate(db)
+  return wrapDatabase(db)
 }
 
 export function publicUser(db, user) {
