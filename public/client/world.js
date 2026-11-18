@@ -396,6 +396,7 @@ export async function createWorld(canvas) {
   const shown = new Map()
   let ballShown = { x: 0.35, y: 0.078, z: 0.2 }
   let pred = null
+  let aimYaw = 0
   let running = true
   let last = performance.now()
 
@@ -485,9 +486,9 @@ export async function createWorld(canvas) {
         const tx = usePred ? pred.x : p.x
         const tz = usePred ? pred.z : p.z
         const ty = usePred ? pred.yaw : p.yaw
-        view.x = damp(view.x, tx, p.id === meId ? 22 : 14, dt)
-        view.z = damp(view.z, tz, p.id === meId ? 22 : 14, dt)
-        view.yaw = dampAngle(view.yaw, ty, p.id === meId ? 18 : 12, dt)
+        view.x = damp(view.x, tx, p.id === meId ? 36 : 14, dt)
+        view.z = damp(view.z, tz, p.id === meId ? 36 : 14, dt)
+        view.yaw = dampAngle(view.yaw, ty, p.id === meId ? 28 : 12, dt)
         duck.root.position.set(view.x, 0, view.z)
         duck.apply(p.anim || 'idle', p.animT || demoT, view.yaw)
       }
@@ -499,13 +500,14 @@ export async function createWorld(canvas) {
         bz = pred.z + Math.cos(pred.yaw) * DRIBBLE
         by = 0.078
       }
-      ballShown.x = damp(ballShown.x, bx, 16, dt)
-      ballShown.y = damp(ballShown.y, by, 16, dt)
-      ballShown.z = damp(ballShown.z, bz, 16, dt)
+      ballShown.x = damp(ballShown.x, bx, 28, dt)
+      ballShown.y = damp(ballShown.y, by, 28, dt)
+      ballShown.z = damp(ballShown.z, bz, 28, dt)
       ball.position.set(ballShown.x, Math.max(0.078, ballShown.y), ballShown.z)
       ballShadow.position.set(ball.position.x, 0.01, ball.position.z)
       const follow = me ? shown.get(me.id) : null
       const yaw = (follow ? follow.yaw : 0) + orbit
+      aimYaw = yaw
       const dist = 1.35
       const focus = follow || { x: snap.ball.x, z: snap.ball.z }
       camera.position.set(focus.x - Math.sin(yaw) * dist, 0.78, focus.z - Math.cos(yaw) * dist)
@@ -541,6 +543,7 @@ export async function createWorld(canvas) {
   requestAnimationFrame(frame)
 
   return {
+    get aimYaw() { return aimYaw },
     resize,
     setDemo() {
       mode = 'demo'

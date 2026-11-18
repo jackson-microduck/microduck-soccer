@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS users (
   draws INTEGER NOT NULL DEFAULT 0,
   matches_played INTEGER NOT NULL DEFAULT 0,
   club_id INTEGER,
+  is_bot INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sessions (
@@ -96,10 +97,13 @@ function wrapDatabase(db) {
 }
 
 function migrate(db) {
-  // Version 1 is the original table set. CREATE IF NOT EXISTS above keeps an
-  // existing data/league.sqlite working without rewriting its rows.
+  // Existing league files keep their rows. New columns are added with defaults.
   const row = db.prepare('PRAGMA user_version').get()
   const version = Number(row?.user_version || 0)
+  const cols = db.prepare('PRAGMA table_info(users)').all()
+  if (cols.length && !cols.some((col) => col.name === 'is_bot')) {
+    db.exec('ALTER TABLE users ADD COLUMN is_bot INTEGER NOT NULL DEFAULT 0')
+  }
   if (version < 1) db.exec('PRAGMA user_version = 1')
 }
 
@@ -147,12 +151,13 @@ export function searchUsers(db, q, limit = 30) {
   const query = String(q || '').trim().slice(0, 16).replace(/[%_]/g, '')
   let rows
   let total
+  const human = 'COALESCE(is_bot, 0) = 0'
   if (!query) {
-    total = db.prepare('SELECT COUNT(*) AS n FROM users').get().n
-    rows = db.prepare('SELECT * FROM users ORDER BY username COLLATE NOCASE LIMIT ?').all(limit)
+    total = db.prepare(`SELECT COUNT(*) AS n FROM users WHERE ${human}`).get().n
+    rows = db.prepare(`SELECT * FROM users WHERE ${human} ORDER BY username COLLATE NOCASE LIMIT ?`).all(limit)
   } else {
-    total = db.prepare('SELECT COUNT(*) AS n FROM users WHERE username LIKE ? COLLATE NOCASE').get(`%${query}%`).n
-    rows = db.prepare('SELECT * FROM users WHERE username LIKE ? COLLATE NOCASE ORDER BY username COLLATE NOCASE LIMIT ?').all(`%${query}%`, limit)
+    total = db.prepare(`SELECT COUNT(*) AS n FROM users WHERE ${human} AND username LIKE ? COLLATE NOCASE`).get(`%${query}%`).n
+    rows = db.prepare(`SELECT * FROM users WHERE ${human} AND username LIKE ? COLLATE NOCASE ORDER BY username COLLATE NOCASE LIMIT ?`).all(`%${query}%`, limit)
   }
   return { total, players: rows.map((row) => publicUser(db, row)) }
 }
@@ -160,7 +165,7 @@ export function searchUsers(db, q, limit = 30) {
 export function clubSummary(db, clubId) {
   const club = db.prepare('SELECT * FROM clubs WHERE id = ?').get(clubId)
   if (!club) return null
-  const members = db.prepare('SELECT * FROM users WHERE club_id = ? ORDER BY rating DESC, goals DESC, username COLLATE NOCASE').all(clubId)
+  const members = db.prepare('SELECT * FROM users WHERE club_id = ? AND COALESCE(is_bot, 0) = 0 ORDER BY rating DESC, goals DESC, username COLLATE NOCASE').all(clubId)
   const owner = members.find((m) => m.id === club.owner_id) || getUserById(db, club.owner_id)
   return {
     id: club.id,

@@ -1051,7 +1051,7 @@ function buildPad() {
 function currentStick() {
   let mx = 0
   let mz = 0
-  const yaw = camYaw || 0
+  const yaw = state.screen === 'match' && world ? world.aimYaw : (camYaw || 0)
   const fX = Math.sin(yaw)
   const fZ = Math.cos(yaw)
   const rX = Math.cos(yaw)
@@ -1106,7 +1106,7 @@ function helpNode() {
     'Sprint: hold Shift. The stamina bar drains, then refills when you let go. Sprinting with the ball is slower than sprinting without it.',
     'Kick: K or Space. Pass: J.',
     'Slide tackle: C. If you miss, you are stunned briefly and the move goes on cooldown.',
-    'Dribble spin: Q. A quick Microduck spin that dodges a slide tackle if you time it. It has its own cooldown.',
+    'Dribble spin: Q. During the spin, and for a moment after, nobody can take the ball. A slide into it misses and stuns. It has a cooldown.',
     'Goalie dive (3v3 only): G. Dive to catch a shot.',
     'After a goal, the scoring side celebrates for 8 seconds: 1 spin, 2 quack, 3 head bob, 4 sit and stand, 5 roller glide.',
   ]) {
@@ -1195,14 +1195,24 @@ function setupInput() {
     const dx = e.clientX - (rect.left + rect.width / 2)
     const dy = e.clientY - (rect.top + rect.height / 2)
     const max = rect.width / 2
-    const mag = Math.hypot(dx, dy) || 1
-    const clamped = Math.min(max - 16, mag)
+    const mag = Math.hypot(dx, dy)
+    const dead = max * 0.16
+    if (mag <= dead) {
+      joy.x = 0
+      joy.y = 0
+      knob.style.left = '32px'
+      knob.style.top = '32px'
+      return
+    }
     const nx = dx / mag
     const ny = dy / mag
-    joy.x = (dx / mag) * (clamped / max)
-    joy.y = (dy / mag) * (clamped / max)
-    knob.style.left = `${32 + nx * clamped * 0.55}px`
-    knob.style.top = `${32 + ny * clamped * 0.55}px`
+    const strength = Math.min(1, (mag - dead) / (max - dead))
+    const feel = Math.pow(strength, 0.72)
+    joy.x = nx * feel
+    joy.y = ny * feel
+    const reach = (max - 26) * feel
+    knob.style.left = `${32 + nx * reach}px`
+    knob.style.top = `${32 + ny * reach}px`
   }
   document.getElementById('help-btn').addEventListener('click', () => openHelp(null))
   document.getElementById('leave-btn').addEventListener('click', () => {

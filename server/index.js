@@ -166,7 +166,7 @@ export function start(opts = {}) {
   app.get('/api/players/:username', (req, res) => {
     if (!requireUser(req, res)) return
     const user = getUserByName(db, req.params.username)
-    if (!user) return res.status(404).json({ error: 'No player with that username.' })
+    if (!user || user.is_bot) return res.status(404).json({ error: 'No player with that username.' })
     res.json({ player: publicUser(db, user) })
   })
 
@@ -248,7 +248,7 @@ export function start(opts = {}) {
     const name = cleanUsername(req.body?.username)
     if (!name) return res.status(400).json({ error: 'Enter a username.' })
     const target = getUserByName(db, name)
-    if (!target) return res.status(404).json({ error: 'No player with that username.' })
+    if (!target || target.is_bot) return res.status(404).json({ error: 'No player with that username.' })
     if (target.id === user.id) return res.status(400).json({ error: 'You are already in your club.' })
     if (target.club_id) return res.status(400).json({ error: `${target.username} already plays for a club.` })
     const existing = db.prepare(

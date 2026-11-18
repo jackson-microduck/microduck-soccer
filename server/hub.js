@@ -354,7 +354,7 @@ export function createHub(db) {
       const room = rooms.get(conn.roomCode)
       if (!room || room.hostId !== conn.user.id) return fail(conn, 'Only the host can invite.')
       if (!room.clubId) return fail(conn, 'Invites are for club matches. Turn on Club match when you create the room.')
-      const members = db.prepare('SELECT id, username FROM users WHERE club_id = ?').all(room.clubId)
+      const members = db.prepare('SELECT id, username FROM users WHERE club_id = ? AND COALESCE(is_bot, 0) = 0').all(room.clubId)
       const ids = [...new Set((msg.ids || []).map((id) => Number(id)))]
         .filter((id) => members.some((m) => m.id === id) && id !== conn.user.id && !room.players.some((p) => p.id === id))
       if (!ids.length) return fail(conn, 'Pick clubmates who are not already in the room.')

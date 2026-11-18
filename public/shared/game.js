@@ -13,7 +13,8 @@ export const SPRINT_BALL = 1.24
 export const BALL_R = 0.078
 export const PLAYER_R = 0.11
 export const PICKUP_R = 0.32
-export const DRIBBLE = 0.23
+export const DRIBBLE = 0.18
+export const SPIN_GRACE = 0.28
 export const GOAL_W = 0.42
 export const GOAL_H = 0.26
 export const SPIN_TIME = 0.42
@@ -128,6 +129,9 @@ export function makePlayer(raw, team) {
     slideYaw: 0,
     spinning: 0,
     spinCd: 0,
+    spinGuard: 0,
+    buffer: null,
+    bufferT: 0,
     diving: 0,
     diveCd: 0,
     diveYaw: 0,
@@ -323,6 +327,14 @@ function canAct(match, p) {
   return match.phase === 'play'
 }
 
+function nudgeTowardGoal(match, p) {
+  const dir = p.team === 'A' ? 1 : -1
+  const goalZ = dir * (match.length / 2 - 0.15)
+  const aim = Math.atan2(-p.x * 0.2, goalZ - p.z)
+  const diff = Math.abs(((aim - p.yaw + Math.PI) % (Math.PI * 2)) - Math.PI)
+  if (diff < 0.65) p.yaw = lerpAngle(p.yaw, aim, 0.75)
+}
+
 function releaseBall(match, p, speed, lift, pass) {
   const ball = match.ball
   const s = Math.sin(p.yaw)
@@ -355,7 +367,7 @@ function aimAtTeammate(match, p) {
     const facing = Math.atan2(dx, dz)
     let diff = Math.abs(lerpAngle(p.yaw, facing, 1) - p.yaw)
     diff = Math.abs(((facing - p.yaw + Math.PI) % (Math.PI * 2)) - Math.PI)
-    if (diff > 0.7) continue
+    if (diff > 1.15) continue
     best = other
     bestD = dist
   }
@@ -396,6 +408,7 @@ function handleButtons(match, p) {
     p.animT = 0
   }
   if (p.pressed.kick && hasBall(match, p) && p.spinning <= 0) {
+    nudgeTowardGoal(match, p)
     releaseBall(match, p, KICK_SPEED, KICK_LIFT, false)
   } else if (p.pressed.pass && hasBall(match, p) && p.spinning <= 0) {
     const mate = aimAtTeammate(match, p)
@@ -434,8 +447,9 @@ export function integrateMover(p, dt, match) {
     p.sprinting = false
     p.stamina = Math.min(STAMINA_MAX, p.stamina + STAMINA_REGEN * dt * 0.35)
   } else if (frozen || (mx === 0 && mz === 0)) {
-    p.vx += (0 - p.vx) * Math.min(1, 10 * dt)
-    p.vz += (0 - p.vz) * Math.min(1, 10 * dt)
+    const stop = Math.min(1, 22 * dt)
+    p.vx += (0 - p.vx) * stop
+    p.vz += (0 - p.vz) * stop
     p.sprinting = false
     if (!frozen) p.stamina = Math.min(STAMINA_MAX, p.stamina + STAMINA_REGEN * dt)
   } else {
@@ -450,10 +464,11 @@ export function integrateMover(p, dt, match) {
     }
     const speed = p.sprinting ? (ballOwned ? SPRINT_BALL : SPRINT) : WALK
     const targetYaw = Math.atan2(mx, mz)
-    p.yaw = lerpAngle(p.yaw, targetYaw, 1 - Math.exp(-12 * dt))
+    const turn = ballOwned ? 28 : 20
+    p.yaw = lerpAngle(p.yaw, targetYaw, 1 - Math.exp(-turn * dt))
     const tvx = mx * speed
     const tvz = mz * speed
-    const k = 1 - Math.exp(-9 * dt)
+    const k = 1 - Math.exp((ballOwned ? -22 : -18) * dt)
     p.vx += (tvx - p.vx) * k
     p.vz += (tvz - p.vz) * k
   }
@@ -474,8 +489,15 @@ export function integrateMover(p, dt, match) {
   p.diveCd = Math.max(0, p.diveCd - dt)
   p.pickupLock = Math.max(0, p.pickupLock - dt)
   p.kickT = Math.max(0, p.kickT - dt)
+  const wasSpinning = p.spinning > 0
   if (p.spinning > 0) p.spinning = Math.max(0, p.spinning - dt)
+  if (wasSpinning && p.spinning === 0) p.spinGuard = SPIN_GRACE
+  else p.spinGuard = Math.max(0, (p.spinGuard || 0) - dt)
   if (p.diving > 0) p.diving = Math.max(0, p.diving - dt)
+}
+
+function ballProtected(p) {
+  return p.spinning > 0 || (p.spinGuard || 0) > 0
 }
 
 function separatePlayers(match) {
@@ -494,13 +516,15 @@ function separatePlayers(match) {
         d = 0.01
       }
       if (d < min) {
-        const push = (min - d) / 2
+        const overlap = min - d
         const nx = dx / d
         const nz = dz / d
-        a.x -= nx * push
-        a.z -= nz * push
-        b.x += nx * push
-        b.z += nz * push
+        const owner = match.ball.owner
+        const aShare = owner === a.id ? 0.12 : owner === b.id ? 0.88 : 0.5
+        a.x -= nx * overlap * aShare
+        a.z -= nz * overlap * aShare
+        b.x += nx * overlap * (1 - aShare)
+        b.z += nz * overlap * (1 - aShare)
       }
     }
   }
@@ -693,7 +717,7 @@ function detectSlides(match, events) {
     const dCar = hypot(fx - carrier.x, fz - carrier.z)
     const dBall = hypot(fx - ball.x, fz - ball.z)
     if (dCar > 0.36 && dBall > 0.32) continue
-    if (carrier.spinning > 0 || p.notedDodge) {
+    if (ballProtected(carrier) || p.notedDodge) {
       if (!p.notedDodge) {
         p.notedDodge = true
         events.push({ type: 'dodge', by: p.name, carrier: carrier.name })
@@ -801,6 +825,18 @@ export function step(match, dt) {
   match.clock = Math.max(0, match.clock - dtUse)
   match.ball.grabLock = Math.max(0, match.ball.grabLock - dtUse)
 
+  for (const p of match.players) {
+    p.fromBuffer = false
+    if (p.bufferT > 0 && p.buffer) {
+      p.bufferT -= dtUse
+      for (const key of ['kick', 'pass', 'slide', 'spin']) {
+        if (!p.buffer[key]) continue
+        if (!p.pressed[key]) p.fromBuffer = true
+        p.pressed[key] = true
+      }
+      if (p.bufferT <= 0) p.buffer = null
+    }
+  }
   for (const p of match.players) handleButtons(match, p)
 
   for (const p of match.players) integrateMover(p, dtUse, match)
@@ -841,7 +877,20 @@ export function step(match, dt) {
 
   if (match.phase === 'play' && match.clock <= 0) endMatch(match, events)
 
-  for (const p of match.players) p.pressed = {}
+  for (const p of match.players) {
+    if (!p.fromBuffer) {
+      const keep = {}
+      if (p.pressed.kick) keep.kick = true
+      if (p.pressed.pass) keep.pass = true
+      if (p.pressed.slide) keep.slide = true
+      if (p.pressed.spin) keep.spin = true
+      if (keep.kick || keep.pass || keep.slide || keep.spin) {
+        p.buffer = keep
+        p.bufferT = 0.2
+      }
+    }
+    p.pressed = {}
+  }
   updateAnims(match, dtUse)
   return events
 }
