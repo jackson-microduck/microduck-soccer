@@ -206,7 +206,8 @@ input[type="text"], input[type="password"], input[type="search"], input:not([typ
   z-index: 20;
   background: #d7ecff;
 }
-.stage-match { position: absolute; inset: 0; }
+.stage-match { position: absolute; inset: 0; z-index: 1; }
+body.playing.touch .stage-match { pointer-events: none; }
 .scorebug {
   position: absolute;
   top: max(8px, env(safe-area-inset-top));
@@ -375,7 +376,14 @@ body.touch #touch { display: block; }
   z-index: 40;
   font-weight: 800;
 }
-body.playing { overflow: hidden; padding: 0; }
+body.playing { overflow: hidden; padding: 0; touch-action: none; }
+#touch {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+}
+#stick, #pad, .scorebug, #power, .icon-btn, #banner { z-index: 6; pointer-events: auto; }
 @media (max-width: 700px) {
   #leave-btn, #help-btn { top: max(8px, env(safe-area-inset-top)); }
   .scorebug {

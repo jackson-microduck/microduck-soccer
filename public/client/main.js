@@ -157,6 +157,8 @@ function onNet(msg) {
     return
   }
   if (msg.t === 'snap') {
+    const base = state.snap || state.pendingStart?.snap
+    if (base && msg.lite) msg = mergeSnap(base, msg)
     if (state.pendingStart) state.pendingStart.snap = msg
     state.snap = msg
     if (state.screen === 'match') {
@@ -657,8 +659,9 @@ function profilePanel(player) {
     name.textContent = player.club.name
     row.append(name)
     box.append(row)
-  } else if (state.club && player.id !== state.me.id) {
-    box.append(button('Invite to my club', 'primary', async () => {
+  }
+  if (state.club && state.club.ownerId === state.me.id && player.id !== state.me.id) {
+    box.append(button(`Invite to ${state.club.name}`, 'primary', async () => {
       try {
         await api('/api/clubs/invites', { username: player.username })
         toast(`Invited ${player.username}`)
@@ -791,6 +794,20 @@ function clubCard() {
     list.append(row)
   })
   box.append(list)
+  if (state.club.ownerId === state.me.id) {
+    box.append(h('h3', 'Add a player'))
+    const who = document.createElement('input')
+    who.maxLength = 16
+    who.placeholder = 'Their username'
+    who.autocomplete = 'off'
+    box.append(who, button('Invite', 'primary', async () => {
+      try {
+        await api('/api/clubs/invites', { username: who.value })
+        who.value = ''
+        toast('Invite sent. They accept it from Home.')
+      } catch (err) { toast(err.message) }
+    }))
+  }
   if (state.club.ownerId === state.me.id) {
     box.append(h('h3', 'Club logo'))
     const studio = document.createElement('div')
@@ -1215,14 +1232,29 @@ function hideMatch() {
   banner.classList.add('hidden')
 }
 
+function mergeSnap(prev, next) {
+  const players = (next.players || []).map((p) => ({
+    ...(prev.players.find((item) => item.id === p.id) || {}),
+    ...p,
+  }))
+  return { ...prev, ...next, players }
+}
+
+function setLogo(id, src) {
+  const img = document.getElementById(id)
+  if (!img || img.dataset.src === src) return
+  img.dataset.src = src
+  img.src = src
+}
+
 function updateHud(snap) {
   const me = snap.players.find((p) => p.id === String(state.me.id))
-  document.getElementById('home-name').textContent = snap.homeName
-  document.getElementById('away-name').textContent = snap.awayName
+  document.getElementById('home-name').textContent = snap.homeName || ''
+  document.getElementById('away-name').textContent = snap.awayName || ''
   document.getElementById('home-score').textContent = String(snap.score.A)
   document.getElementById('away-score').textContent = String(snap.score.B)
-  document.getElementById('home-logo').src = logoFor(snap.homeLogo, snap.homeName, '#ff7a2e')
-  document.getElementById('away-logo').src = logoFor(snap.awayLogo, snap.awayName, '#3c92ff')
+  setLogo('home-logo', logoFor(snap.homeLogo, snap.homeName, '#ff7a2e'))
+  setLogo('away-logo', logoFor(snap.awayLogo, snap.awayName, '#3c92ff'))
   const clock = Math.max(0, Math.ceil(snap.clock))
   document.getElementById('clock').textContent = `${Math.floor(clock / 60)}:${String(clock % 60).padStart(2, '0')}`
   const fill = document.getElementById('stamina-fill')
@@ -1450,10 +1482,14 @@ function enterMatch(msg) {
 
 function flushInput() {
   if (state.screen !== 'match') return
-  const msg = { t: 'in', seq: (flushInput.seq = (flushInput.seq || 0) + 1), ...currentStick() }
-  const key = JSON.stringify(msg)
-  if (key === sent && !msg.kick && !msg.pass && !msg.slide && !msg.spin && !msg.dive && !msg.emoteId) return
-  sent = key
+  const stick = currentStick()
+  const body = JSON.stringify(stick)
+  const now = performance.now()
+  const buttons = stick.kick || stick.pass || stick.slide || stick.spin || stick.dive || stick.emoteId
+  if (body === sent && !buttons && now - (flushInput.at || 0) < 200) return
+  sent = body
+  flushInput.at = now
+  const msg = { t: 'in', seq: (flushInput.seq = (flushInput.seq || 0) + 1), ...stick }
   world?.setInput({ mx: msg.mx, mz: msg.mz, sprint: msg.sprint })
   send(msg)
 }
@@ -1552,23 +1588,43 @@ function setupInput() {
   })
   const stick = document.getElementById('stick')
   const knob = document.getElementById('knob')
-  stick.addEventListener('pointerdown', (e) => {
+  const pointOf = (e) => (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e
+  const beginJoy = (e) => {
+    if (e.cancelable) e.preventDefault()
+    e.stopPropagation()
     joy.active = true
-    stick.setPointerCapture(e.pointerId)
+    if (e.pointerId != null) {
+      try { stick.setPointerCapture(e.pointerId) } catch { /* a touch event has no pointer to capture */ }
+    }
     moveJoy(e)
-  })
-  stick.addEventListener('pointermove', (e) => { if (joy.active) moveJoy(e) })
+    flushInput()
+  }
+  const dragJoy = (e) => {
+    if (!joy.active) return
+    if (e.cancelable) e.preventDefault()
+    moveJoy(e)
+  }
   const end = () => {
+    if (!joy.active) return
     joy = { x: 0, y: 0, active: false }
     knob.style.left = '32px'
     knob.style.top = '32px'
+    flushInput()
   }
-  stick.addEventListener('pointerup', end)
-  stick.addEventListener('pointercancel', end)
+  stick.addEventListener('pointerdown', beginJoy, { passive: false })
+  stick.addEventListener('touchstart', beginJoy, { passive: false })
+  window.addEventListener('pointermove', dragJoy, { passive: false })
+  window.addEventListener('touchmove', dragJoy, { passive: false })
+  window.addEventListener('pointerup', end)
+  window.addEventListener('pointercancel', end)
+  window.addEventListener('touchend', end)
+  window.addEventListener('touchcancel', end)
   function moveJoy(e) {
+    const point = pointOf(e)
     const rect = stick.getBoundingClientRect()
-    const dx = e.clientX - (rect.left + rect.width / 2)
-    const dy = e.clientY - (rect.top + rect.height / 2)
+    if (rect.width < 2) return
+    const dx = point.clientX - (rect.left + rect.width / 2)
+    const dy = point.clientY - (rect.top + rect.height / 2)
     const max = rect.width / 2
     const mag = Math.hypot(dx, dy)
     const dead = max * 0.16

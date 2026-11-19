@@ -947,8 +947,63 @@ function endMatch(match, events) {
   events.push({ type: 'fulltime', score: { ...match.score } })
 }
 
-export function snapshot(match) {
-  const r = (n) => Math.round(n * 1000) / 1000
+export function snapshot(match, lite = false) {
+  const r = (n) => Math.round(n * 100) / 100
+  const ball = {
+    x: r(match.ball.x),
+    y: r(match.ball.y),
+    z: r(match.ball.z),
+    owner: match.ball.owner,
+  }
+  const players = match.players.map((p) => {
+    const row = {
+      id: p.id,
+      x: r(p.x),
+      z: r(p.z),
+      yaw: r(p.yaw),
+      vx: r(p.vx),
+      vz: r(p.vz),
+      anim: p.anim,
+      animT: r(p.animT),
+      stamina: r(p.stamina),
+      stun: p.stun > 0,
+    }
+    if (!lite) {
+      row.name = p.name
+      row.team = p.team
+      row.goalie = p.goalie
+      row.bot = p.bot
+      row.color = p.color
+      row.rating = p.rating
+      row.goals = p.goals
+      row.assists = p.assists
+      row.emote = p.emote
+      row.sprinting = p.sprinting
+      row.slideCd = r(p.slideCd)
+      row.spinCd = r(p.spinCd)
+      row.ack = p.ack
+    }
+    return row
+  })
+  const field = { length: match.length, width: match.width, goalW: match.goalW, goalH: match.goalH }
+  if (lite) {
+    return {
+      t: 'snap',
+      lite: 1,
+      phase: match.phase,
+      phaseT: r(match.phaseT),
+      clock: r(match.clock),
+      score: match.score,
+      celebrateTeam: match.celebrateTeam,
+      scorerName: match.scorerName,
+      field,
+      ball,
+      players,
+    }
+  }
+  ball.vx = r(match.ball.vx)
+  ball.vy = r(match.ball.vy)
+  ball.vz = r(match.ball.vz)
   return {
     t: 'snap',
     id: match.id,
@@ -969,41 +1024,9 @@ export function snapshot(match) {
     clubName: match.clubName,
     difficulty: match.difficulty || null,
     goalies: match.goalies !== false && match.mode === '3v3',
-    field: { length: match.length, width: match.width, goalW: match.goalW, goalH: match.goalH },
-    ball: {
-      x: r(match.ball.x),
-      y: r(match.ball.y),
-      z: r(match.ball.z),
-      vx: r(match.ball.vx),
-      vy: r(match.ball.vy),
-      vz: r(match.ball.vz),
-      owner: match.ball.owner,
-    },
-    players: match.players.map((p) => ({
-      id: p.id,
-      name: p.name,
-      team: p.team,
-      x: r(p.x),
-      z: r(p.z),
-      yaw: r(p.yaw),
-      vx: r(p.vx),
-      vz: r(p.vz),
-      goalie: p.goalie,
-      bot: p.bot,
-      color: p.color,
-      rating: p.rating,
-      goals: p.goals,
-      assists: p.assists,
-      anim: p.anim,
-      animT: r(p.animT),
-      emote: p.emote,
-      stamina: r(p.stamina),
-      sprinting: p.sprinting,
-      stun: p.stun > 0,
-      slideCd: r(p.slideCd),
-      spinCd: r(p.spinCd),
-      ack: p.ack,
-    })),
+    field,
+    ball,
+    players,
   }
 }
 

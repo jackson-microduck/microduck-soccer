@@ -213,3 +213,35 @@ test('several clubs, owner ready, challenges, and ranks that skip bots', async (
     await app.close()
   }
 })
+
+test('an owner can search, invite, and add someone who already has a club', async () => {
+  const app = await start({ port: 0, dbPath: ':memory:' })
+  try {
+    const ada = client(app.port)
+    const bea = client(app.port)
+    assert.equal((await ada.call('POST', '/api/signup', { username: 'Ada', password: 'secret' })).status, 200)
+    assert.equal((await bea.call('POST', '/api/signup', { username: 'Bea', password: 'secret' })).status, 200)
+    assert.equal((await ada.call('POST', '/api/clubs', { name: 'Pond United' })).status, 200)
+    assert.equal((await bea.call('POST', '/api/clubs', { name: 'Lake Town' })).status, 200)
+
+    const found = await ada.call('GET', '/api/players?q=be')
+    assert.equal(found.data.players.length, 1)
+    assert.equal(found.data.players[0].username, 'Bea')
+    const invite = await ada.call('POST', '/api/clubs/invites', { username: found.data.players[0].username })
+    assert.equal(invite.status, 200, JSON.stringify(invite.data))
+
+    const notes = await bea.call('GET', '/api/notifications')
+    const note = notes.data.notifications.find((item) => item.kind === 'club_invite')
+    assert.match(note.body, /Ada invited you to join Pond United/)
+    const accepted = await bea.call('POST', `/api/notifications/${note.id}/respond`, { action: 'accept' })
+    assert.equal(accepted.status, 200, JSON.stringify(accepted.data))
+
+    const mine = await ada.call('GET', '/api/clubs/mine')
+    assert.deepEqual(mine.data.club.members.map((member) => member.username).sort(), ['Ada', 'Bea'])
+    const beaClubs = await bea.call('GET', '/api/clubs/mine')
+    assert.equal(beaClubs.data.owned.some((club) => club.name === 'Lake Town'), true)
+    assert.equal(beaClubs.data.joined.some((club) => club.name === 'Pond United'), true)
+  } finally {
+    await app.close()
+  }
+})

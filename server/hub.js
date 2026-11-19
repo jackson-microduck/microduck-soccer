@@ -254,7 +254,7 @@ export function createHub(db) {
     for (const live of matches.values()) {
       driveBots(live.match)
       const events = step(live.match, TICK)
-      const snap = JSON.stringify(snapshot(live.match))
+      const snap = JSON.stringify(snapshot(live.match, true))
       const extra = events.length ? JSON.stringify({ t: 'events', events }) : null
       for (const ws of live.sockets) {
         if (ws.readyState === 1) {

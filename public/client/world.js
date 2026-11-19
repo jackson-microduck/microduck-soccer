@@ -26,6 +26,11 @@ function loadRig() {
   return rigPromise
 }
 
+function surface(color, rough, simple) {
+  if (simple) return new THREE.MeshLambertMaterial({ color })
+  return new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: 0.06 })
+}
+
 function colorFor(mesh, accent) {
   if (ACCENT.test(mesh)) return accent
   if (/noenoeil/.test(mesh)) return '#ffb000'
@@ -134,7 +139,7 @@ function pose(anim, t) {
   return { joints: a, body }
 }
 
-function buildDuck(geoms, kin, accent, team, name, goalie) {
+function buildDuck(geoms, kin, accent, team, name, goalie, simple) {
   const root = new THREE.Group()
   const tilt = new THREE.Group()
   root.add(tilt)
@@ -155,11 +160,7 @@ function buildDuck(geoms, kin, accent, team, name, goalie) {
       if (OMIT.test(geom.mesh)) continue
       const geo = geoms.get(geom.mesh.replace(/\./g, '').toLowerCase())
       if (!geo) continue
-      const mat = new THREE.MeshStandardMaterial({
-        color: colorFor(geom.mesh, accent),
-        roughness: 0.58,
-        metalness: 0.06,
-      })
+      const mat = surface(colorFor(geom.mesh, accent), 0.58, simple)
       const mesh = new THREE.Mesh(geo, mat)
       const [gw, gx, gy, gz] = geom.quat
       mesh.quaternion.set(gx, gy, gz, gw)
@@ -174,7 +175,7 @@ function buildDuck(geoms, kin, accent, team, name, goalie) {
   }
   const sash = new THREE.Mesh(
     new THREE.CylinderGeometry(0.042, 0.046, 0.03, 14),
-    new THREE.MeshStandardMaterial({ color: team === 'A' ? '#ff7a2e' : '#3c92ff', roughness: 0.45 }),
+    surface(team === 'A' ? '#ff7a2e' : '#3c92ff', 0.45, simple),
   )
   sash.position.y = 0.145
   tilt.add(sash)
@@ -273,13 +274,15 @@ function ballTexture() {
   return tex
 }
 
-function buildField(length, width, goalW, goalH) {
+function buildField(length, width, goalW, goalH, simple) {
   const group = new THREE.Group()
   const tex = woodTexture()
   tex.repeat.set(width / 0.9, length / 0.9)
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(width, length),
-    new THREE.MeshStandardMaterial({ map: tex, roughness: 0.86 }),
+    simple
+      ? new THREE.MeshLambertMaterial({ map: tex })
+      : new THREE.MeshStandardMaterial({ map: tex, roughness: 0.86 }),
   )
   floor.rotation.x = -Math.PI / 2
   floor.receiveShadow = true
@@ -304,7 +307,7 @@ function buildField(length, width, goalW, goalH) {
     line(0.025, boxD, -boxW / 2, z)
     line(0.025, boxD, boxW / 2, z)
   }
-  const wallMat = new THREE.MeshStandardMaterial({ color: '#f7f4ee', roughness: 0.9 })
+  const wallMat = surface('#f7f4ee', 0.9, simple)
   const wallH = 0.55
   const thick = 0.08
   const hl = length / 2
@@ -318,13 +321,13 @@ function buildField(length, width, goalW, goalH) {
   addWall(width + thick * 2, wallH, thick, 0, wallH / 2, hl + thick / 2)
   addWall(thick, wallH, length, -hw - thick / 2, wallH / 2, 0)
   addWall(thick, wallH, length, hw + thick / 2, wallH / 2, 0)
-  for (const sign of [-1, 1]) group.add(buildGoal(sign * (hl + 0.02), goalW, goalH, sign))
+  for (const sign of [-1, 1]) group.add(buildGoal(sign * (hl + 0.02), goalW, goalH, sign, simple))
   return group
 }
 
-function buildGoal(z, goalW, goalH, sign) {
+function buildGoal(z, goalW, goalH, sign, simple) {
   const g = new THREE.Group()
-  const white = new THREE.MeshStandardMaterial({ color: '#f4f7fb', roughness: 0.35 })
+  const white = surface('#f4f7fb', 0.35, simple)
   const post = (x) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(0.03, goalH, 0.03), white)
     m.position.set(x, goalH / 2, z)
@@ -357,9 +360,23 @@ function buildGoal(z, goalW, goalH, sign) {
   return g
 }
 
+function lowQuality() {
+  const cores = navigator.hardwareConcurrency || 8
+  const narrow = Math.min(window.innerWidth || 1200, window.innerHeight || 800) < 900
+  const coarse = matchMedia('(pointer: coarse)').matches
+  const saveData = navigator.connection && navigator.connection.saveData
+  return !!(saveData || coarse || narrow || cores <= 4)
+}
+
 export async function createWorld(canvas) {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })
-  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1))
+  const simple = lowQuality()
+  const renderer = new THREE.WebGLRenderer({
+    canvas,
+    antialias: !simple,
+    alpha: true,
+    powerPreference: simple ? 'low-power' : 'high-performance',
+  })
+  renderer.setPixelRatio(simple ? 1 : Math.min(1.5, window.devicePixelRatio || 1))
   renderer.outputColorSpace = THREE.SRGBColorSpace
   const scene = new THREE.Scene()
   scene.background = new THREE.Color('#d7ecff')
@@ -374,7 +391,7 @@ export async function createWorld(canvas) {
   let fieldKey = ''
   const ducks = new Map()
   const ball = new THREE.Mesh(
-    new THREE.SphereGeometry(0.078, 24, 18),
+    new THREE.SphereGeometry(0.078, simple ? 12 : 20, simple ? 10 : 14),
     new THREE.MeshStandardMaterial({ map: ballTexture(), roughness: 0.45 }),
   )
   scene.add(ball)
@@ -394,6 +411,7 @@ export async function createWorld(canvas) {
   let lastX = 0
   let demoT = 0
   const shown = new Map()
+  const samples = []
   let ballShown = { x: 0.35, y: 0.078, z: 0.2 }
   let pred = null
   let aimYaw = 0
@@ -412,7 +430,7 @@ export async function createWorld(canvas) {
     const key = `${spec.length}:${spec.width}:${spec.goalW}:${spec.goalH}`
     if (key === fieldKey) return
     if (field) scene.remove(field)
-    field = buildField(spec.length, spec.width, spec.goalW, spec.goalH)
+    field = buildField(spec.length, spec.width, spec.goalW, spec.goalH, simple)
     scene.add(field)
     fieldKey = key
   }
@@ -420,12 +438,59 @@ export async function createWorld(canvas) {
   function ensureDuck(p) {
     let duck = ducks.get(p.id)
     if (!duck) {
-      duck = buildDuck(geoms, kin, p.color || '#ff6a1a', p.team || 'A', p.name || 'Duck', !!p.goalie)
+      duck = buildDuck(geoms, kin, p.color || '#ff6a1a', p.team || 'A', p.name || 'Duck', !!p.goalie, simple)
       ducks.set(p.id, duck)
       scene.add(duck.root)
       shown.set(p.id, { x: p.x, z: p.z, yaw: p.yaw })
     }
     return duck
+  }
+
+  function noteSample(next) {
+    samples.push({
+      t: performance.now(),
+      players: next.players.map((p) => ({ id: p.id, x: p.x, z: p.z, yaw: p.yaw })),
+      ball: { x: next.ball.x, y: next.ball.y, z: next.ball.z, owner: next.ball.owner },
+    })
+    if (samples.length > 4) samples.shift()
+  }
+
+  function mixAngle(a, b, u) {
+    let d = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI
+    if (d < -Math.PI) d += Math.PI * 2
+    return a + d * u
+  }
+
+  function sampleSpan(now) {
+    if (!samples.length) return null
+    const when = now - 80
+    let prev = samples[0]
+    let curr = samples[samples.length - 1]
+    for (let i = 0; i < samples.length - 1; i++) {
+      if (samples[i].t <= when && samples[i + 1].t >= when) {
+        prev = samples[i]
+        curr = samples[i + 1]
+        break
+      }
+    }
+    if (when >= curr.t) prev = curr
+    const span = Math.max(1, curr.t - prev.t)
+    const u = prev === curr ? 1 : Math.min(1, Math.max(0, (when - prev.t) / span))
+    return { prev, curr, u }
+  }
+
+  function remotePose(id, now) {
+    const span = sampleSpan(now)
+    if (!span) return null
+    const a = span.prev.players.find((p) => p.id === id)
+    const b = span.curr.players.find((p) => p.id === id)
+    if (!b) return null
+    const from = a || b
+    return {
+      x: from.x + (b.x - from.x) * span.u,
+      z: from.z + (b.z - from.z) * span.u,
+      yaw: mixAngle(from.yaw, b.yaw, span.u),
+    }
   }
 
   function damp(a, b, lambda, dt) {
@@ -483,18 +548,33 @@ export async function createWorld(canvas) {
         const duck = ensureDuck(p)
         const view = shown.get(p.id)
         const usePred = pred && p.id === meId && ['idle', 'walk', 'sprint'].includes(p.anim)
-        const tx = usePred ? pred.x : p.x
-        const tz = usePred ? pred.z : p.z
-        const ty = usePred ? pred.yaw : p.yaw
-        view.x = damp(view.x, tx, p.id === meId ? 36 : 14, dt)
-        view.z = damp(view.z, tz, p.id === meId ? 36 : 14, dt)
-        view.yaw = dampAngle(view.yaw, ty, p.id === meId ? 28 : 12, dt)
+        const remote = p.id === meId ? null : remotePose(p.id, now)
+        if (remote) {
+          view.x = remote.x
+          view.z = remote.z
+          view.yaw = remote.yaw
+        } else {
+          const tx = usePred ? pred.x : p.x
+          const tz = usePred ? pred.z : p.z
+          const ty = usePred ? pred.yaw : p.yaw
+          view.x = damp(view.x, tx, 36, dt)
+          view.z = damp(view.z, tz, 36, dt)
+          view.yaw = dampAngle(view.yaw, ty, 28, dt)
+        }
         duck.root.position.set(view.x, 0, view.z)
         duck.apply(p.anim || 'idle', p.animT || demoT, view.yaw)
       }
       let bx = snap.ball.x
       let by = snap.ball.y
       let bz = snap.ball.z
+      const ballSpan = sampleSpan(now)
+      if (ballSpan && !(me && snap.ball.owner === meId)) {
+        const from = ballSpan.prev.ball
+        const to = ballSpan.curr.ball
+        bx = from.x + (to.x - from.x) * ballSpan.u
+        by = from.y + (to.y - from.y) * ballSpan.u
+        bz = from.z + (to.z - from.z) * ballSpan.u
+      }
       if (me && snap.ball.owner === meId && pred) {
         bx = pred.x + Math.sin(pred.yaw) * DRIBBLE
         bz = pred.z + Math.cos(pred.yaw) * DRIBBLE
@@ -561,9 +641,11 @@ export async function createWorld(canvas) {
       meId = String(nextId)
       pred = null
       orbit = 0
+      samples.length = 0
     },
     pushSnap(next, input) {
       snap = next
+      noteSample(next)
       const me = next.players.find((p) => p.id === meId)
       if (!me) return
       if (!pred) {
