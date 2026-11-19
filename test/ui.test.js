@@ -147,14 +147,24 @@ test('headless browser clicks signup, club logos, and a bot match', { timeout: 9
     assert.match(roomCode, /^[A-Z0-9]{6}$/)
     await click('Leave room')
     await sleep(400)
+    await evalJs(`localStorage.removeItem('md-scheme')`)
     await click('Play vs bots')
     await sleep(300)
     await click('5 min')
     await click('Hard')
     await click('Play vs bots')
-    await sleep(400)
-    await click('Phone controls')
-    await sleep(300)
+    await sleep(500)
+    const playAt = await evalJs(`(() => {
+      const b = [...document.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Play' && x.offsetParent)
+      if (!b) return null
+      const r = b.getBoundingClientRect()
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+    })()`)
+    if (!playAt) throw new Error('Play button was not on screen')
+    const hit = await evalJs(`document.elementFromPoint(${playAt.x}, ${playAt.y})?.textContent?.trim() || ''`)
+    assert.equal(hit, 'Play')
+    await evalJs(`document.elementFromPoint(${playAt.x}, ${playAt.y}).dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: ${playAt.x}, clientY: ${playAt.y}, view: window }))`)
+    await sleep(500)
     const started = await evalJs(`(() => {
       const picker = document.getElementById('scheme-picker')
       return {
@@ -163,23 +173,49 @@ test('headless browser clicks signup, club logos, and a bot match', { timeout: 9
         matchOn: !document.getElementById('match').classList.contains('hidden'),
       }
     })()`)
-    assert.equal(started.pickerHidden, true, JSON.stringify(started))
+    assert.equal(started.pickerHidden, true, JSON.stringify({ started, playAt }))
     assert.equal(started.playing, true, JSON.stringify(started))
     assert.equal(started.matchOn, true, JSON.stringify(started))
-    await sleep(400)
+    const laptopControls = await evalJs(`getComputedStyle(document.getElementById('stick')).display`)
+    assert.equal(laptopControls, 'none')
+    await sleep(1500)
     const stayed = await evalJs(`(() => {
       const picker = document.getElementById('scheme-picker')
-      return !picker || picker.classList.contains('hidden')
+      return {
+        hidden: !picker || picker.classList.contains('hidden'),
+        clock: document.getElementById('clock').textContent,
+      }
     })()`)
-    assert.equal(stayed, true)
-    const hud = await evalJs(`JSON.stringify({line:document.getElementById('club-line')?.textContent||'',clock:document.getElementById('clock')?.textContent||'',banner:document.getElementById('banner')?.innerText||'',pad:[...document.querySelectorAll('#pad button')].map(b=>b.textContent).join(','),touch:document.body.className})`)
+    assert.equal(stayed.hidden, true, JSON.stringify(stayed))
+    assert.notEqual(stayed.clock, '5:00')
+    const hud = await evalJs(`JSON.stringify({line:document.getElementById('club-line')?.textContent||'',clock:document.getElementById('clock')?.textContent||''})`)
     assert.match(hud, /Bots · Hard/)
-    assert.match(hud, /5:0|4:5/)
-    assert.match(hud, /Sprint/)
-    assert.match(hud, /Kick/)
-    assert.match(hud, /Slide/)
-    assert.match(hud, /Spin/)
-    assert.match(hud, /touch/)
+    assert.match(hud, /5:0|4:5|3:5/)
+    await evalJs(`document.getElementById('leave-btn').click()`)
+    await sleep(500)
+    await evalJs(`localStorage.setItem('md-scheme','phone')`)
+    await click('Play vs bots')
+    await sleep(250)
+    await click('Play vs bots')
+    await sleep(800)
+    const phoneOn = await evalJs(`(() => {
+      const picker = document.getElementById('scheme-picker')
+      const stick = getComputedStyle(document.getElementById('stick')).display
+      const pad = [...document.querySelectorAll('#pad button')].map((b) => b.textContent).join(',')
+      return {
+        hidden: !picker || picker.classList.contains('hidden'),
+        stick,
+        pad,
+        phone: document.body.classList.contains('phone'),
+      }
+    })()`)
+    assert.equal(phoneOn.hidden, true, JSON.stringify(phoneOn))
+    assert.equal(phoneOn.phone, true, JSON.stringify(phoneOn))
+    assert.notEqual(phoneOn.stick, 'none', JSON.stringify(phoneOn))
+    assert.match(phoneOn.pad, /Sprint/)
+    assert.match(phoneOn.pad, /Kick/)
+    assert.match(phoneOn.pad, /Slide/)
+    assert.match(phoneOn.pad, /Spin/)
     const joy = await evalJs(`(() => {
       const stick = document.getElementById('stick')
       const knob = document.getElementById('knob')

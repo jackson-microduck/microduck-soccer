@@ -1,4 +1,4 @@
-import { createWorld } from './world.js'
+import { createWorld, graphicsIsLow } from './world.js'
 import { badgeDataUrl, mountLogoStudio, safeLogo } from './logo.js'
 import { playGoal, playKick, playQuack, playWhistle, unlockAudio } from './audio.js'
 import { cameraMove, rankFor } from '/shared/game.js'
@@ -152,17 +152,24 @@ function onNet(msg) {
     return
   }
   if (msg.t === 'start') {
-    const matchId = msg.snap?.id || ''
-    if (state.screen === 'match' && state.matchId === matchId) {
-      state.snap = msg.snap
-      world?.pushSnap(msg.snap, currentStick())
-      updateHud(msg.snap)
+    if (state.screen === 'match') {
+      if (msg.snap && state.snap) state.snap = mergeSnap(state.snap, msg.snap)
+      else if (msg.snap) state.snap = msg.snap
+      if (state.snap) {
+        world?.pushSnap(state.snap, currentStick())
+        updateHud(state.snap)
+      }
       return
     }
     state.pendingStart = msg
+    state.pickerFor = msg.snap?.id || state.pickerFor || ''
+    const saved = localStorage.getItem('md-scheme')
+    if (saved === 'laptop' || saved === 'phone') {
+      confirmScheme(saved)
+      return
+    }
     const overlay = document.getElementById('scheme-picker')
-    if (overlay && !overlay.classList.contains('hidden') && state.pickerFor === matchId) return
-    state.pickerFor = matchId
+    if (overlay && !overlay.classList.contains('hidden')) return
     showSchemePicker()
     return
   }
@@ -1033,6 +1040,24 @@ function lobbyCard() {
     localStorage.setItem('md-sensitivity', sens.value)
     sensLabel.textContent = `Sensitivity ${readSens().toFixed(2)} · saved on this device`
   })
+  const gfxLabel = document.createElement('div')
+  gfxLabel.className = 'muted'
+  gfxLabel.textContent = 'Graphics'
+  const gfx = document.createElement('div')
+  gfx.className = 'modes'
+  const gfxNow = localStorage.getItem('md-graphics') === 'low' || (localStorage.getItem('md-graphics') !== 'high' && graphicsIsLow())
+  for (const [id, label] of [['high', 'High'], ['low', 'Low']]) {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = `minute${(id === 'low') === gfxNow ? ' on' : ''}`
+    b.textContent = label
+    b.addEventListener('click', () => {
+      localStorage.setItem('md-graphics', id)
+      world?.setQuality(id === 'low')
+      render()
+    })
+    gfx.append(b)
+  }
   const err = p(state.error, 'error')
   const actions = document.createElement('div')
   actions.className = 'actions'
@@ -1066,7 +1091,7 @@ function lobbyCard() {
   join.maxLength = 6
   box.append(modes, h('h3', 'Length'), minutes)
   if (state.mode === '3v3') box.append(h('h3', '3v3 goalies'), keepers)
-  box.append(h('h3', 'Bot difficulty'), levels, botGoalie, club, practice, sensLabel, sens, err, actions, join, button('Join code', 'ghost', () => {
+  box.append(h('h3', 'Bot difficulty'), levels, botGoalie, club, practice, sensLabel, sens, gfxLabel, gfx, err, actions, join, button('Join code', 'ghost', () => {
     send({ t: 'join', code: join.value.trim().toUpperCase() })
   }))
   return box
@@ -1439,7 +1464,9 @@ function chosenScheme() {
 function applyScheme(scheme) {
   state.scheme = scheme
   localStorage.setItem('md-scheme', scheme)
-  document.body.classList.toggle('touch', scheme === 'phone')
+  const phone = scheme === 'phone'
+  document.body.classList.toggle('touch', phone)
+  document.body.classList.toggle('phone', phone)
 }
 
 function showSchemePicker() {
@@ -1511,21 +1538,19 @@ function flushInput() {
   const body = JSON.stringify(stick)
   const now = performance.now()
   const buttons = stick.kick || stick.pass || stick.slide || stick.spin || stick.dive || stick.emoteId
-  if (body === sent && !buttons && now - (flushInput.at || 0) < 200) return
+  const moving = stick.mx !== 0 || stick.mz !== 0 || stick.sprint
+  world?.setInput({ mx: stick.mx, mz: stick.mz, sprint: stick.sprint })
+  if (body === sent && !buttons && now - (flushInput.at || 0) < (moving ? 32 : 200)) return
   sent = body
   flushInput.at = now
   const msg = { t: 'in', seq: (flushInput.seq = (flushInput.seq || 0) + 1), ...stick }
-  world?.setInput({ mx: msg.mx, mz: msg.mz, sprint: msg.sprint })
   send(msg)
 }
 
 function syncTouch() {
-  if (state.screen === 'match' && state.scheme) {
-    document.body.classList.toggle('touch', state.scheme === 'phone')
-    return
-  }
-  const coarse = matchMedia('(pointer: coarse)').matches || window.innerWidth < 860
-  document.body.classList.toggle('touch', coarse)
+  const phone = state.scheme === 'phone'
+  document.body.classList.toggle('touch', phone)
+  document.body.classList.toggle('phone', phone)
 }
 
 function helpNode() {
@@ -1628,6 +1653,7 @@ function setupInput() {
     if (!joy.active) return
     if (e.cancelable) e.preventDefault()
     moveJoy(e)
+    flushInput()
   }
   const placeKnob = (nx, ny, feel) => {
     const width = stick.getBoundingClientRect().width || stick.offsetWidth || 168

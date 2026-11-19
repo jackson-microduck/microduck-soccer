@@ -470,7 +470,7 @@ export function start(opts = {}) {
   const server = http.createServer(app)
   const wss = new WebSocketServer({ server })
   const hub = createHub(db)
-  const timer = setInterval(() => hub.tick(), 1000 / 30)
+  const timer = setInterval(() => hub.tick(), 1000 / 60)
 
   wss.on('connection', (ws, req) => {
     const token = readCookie(req, 'md')

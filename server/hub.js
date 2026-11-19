@@ -12,7 +12,7 @@ import { createNotification, getUserById, membership, persistResult, recordClubM
 import { BOT_DIFFICULTIES, botRoster, driveBots } from './bots.js'
 import { randomCode } from './auth.js'
 
-const TICK = 1 / 30
+const TICK = 1 / 60
 
 export function createHub(db) {
   const online = new Map()

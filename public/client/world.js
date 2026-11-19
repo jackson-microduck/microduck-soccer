@@ -360,24 +360,56 @@ function buildGoal(z, goalW, goalH, sign, simple) {
   return g
 }
 
-function lowQuality() {
-  const cores = navigator.hardwareConcurrency || 8
-  const narrow = Math.min(window.innerWidth || 1200, window.innerHeight || 800) < 900
+export function graphicsIsLow() {
+  const saved = localStorage.getItem('md-graphics')
+  if (saved === 'low') return true
+  if (saved === 'high') return false
   const coarse = matchMedia('(pointer: coarse)').matches
-  const saveData = navigator.connection && navigator.connection.saveData
-  return !!(saveData || coarse || narrow || cores <= 4)
+  const small = Math.min(window.innerWidth || 1200, window.innerHeight || 800) < 700
+  return coarse && small
+}
+
+function makeRenderer(canvas, low) {
+  const renderer = new THREE.WebGLRenderer({
+    canvas,
+    antialias: !low,
+    alpha: true,
+    powerPreference: low ? 'low-power' : 'high-performance',
+  })
+  renderer.setPixelRatio(low ? 1 : Math.min(window.devicePixelRatio || 1, 2))
+  renderer.outputColorSpace = THREE.SRGBColorSpace
+  return renderer
+}
+
+function retint(root, low) {
+  root.traverse((obj) => {
+    if (!obj.isMesh || !obj.material || obj.material.isMeshBasicMaterial) return
+    const prev = obj.material
+    if (low && prev.isMeshLambertMaterial) return
+    if (!low && prev.isMeshStandardMaterial) return
+    obj.material = low
+      ? new THREE.MeshLambertMaterial({
+        color: prev.color.clone(),
+        map: prev.map,
+        transparent: prev.transparent,
+        opacity: prev.opacity,
+        side: prev.side,
+      })
+      : new THREE.MeshStandardMaterial({
+        color: prev.color.clone(),
+        map: prev.map,
+        roughness: 0.58,
+        metalness: 0.06,
+        transparent: prev.transparent,
+        opacity: prev.opacity,
+        side: prev.side,
+      })
+  })
 }
 
 export async function createWorld(canvas) {
-  const simple = lowQuality()
-  const renderer = new THREE.WebGLRenderer({
-    canvas,
-    antialias: !simple,
-    alpha: true,
-    powerPreference: simple ? 'low-power' : 'high-performance',
-  })
-  renderer.setPixelRatio(simple ? 1 : Math.min(1.5, window.devicePixelRatio || 1))
-  renderer.outputColorSpace = THREE.SRGBColorSpace
+  let simple = graphicsIsLow()
+  let renderer = makeRenderer(canvas, simple)
   const scene = new THREE.Scene()
   scene.background = new THREE.Color('#d7ecff')
   scene.fog = new THREE.Fog('#d7ecff', 8, 18)
@@ -407,11 +439,11 @@ export async function createWorld(canvas) {
   let snap = null
   let meId = null
   let orbit = 0
+  let camYaw = 0
   let dragging = false
   let lastX = 0
   let demoT = 0
   const shown = new Map()
-  const samples = []
   let ballShown = { x: 0.35, y: 0.078, z: 0.2 }
   let pred = null
   let aimYaw = 0
@@ -444,53 +476,6 @@ export async function createWorld(canvas) {
       shown.set(p.id, { x: p.x, z: p.z, yaw: p.yaw })
     }
     return duck
-  }
-
-  function noteSample(next) {
-    samples.push({
-      t: performance.now(),
-      players: next.players.map((p) => ({ id: p.id, x: p.x, z: p.z, yaw: p.yaw })),
-      ball: { x: next.ball.x, y: next.ball.y, z: next.ball.z, owner: next.ball.owner },
-    })
-    if (samples.length > 4) samples.shift()
-  }
-
-  function mixAngle(a, b, u) {
-    let d = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI
-    if (d < -Math.PI) d += Math.PI * 2
-    return a + d * u
-  }
-
-  function sampleSpan(now) {
-    if (!samples.length) return null
-    const when = now - 80
-    let prev = samples[0]
-    let curr = samples[samples.length - 1]
-    for (let i = 0; i < samples.length - 1; i++) {
-      if (samples[i].t <= when && samples[i + 1].t >= when) {
-        prev = samples[i]
-        curr = samples[i + 1]
-        break
-      }
-    }
-    if (when >= curr.t) prev = curr
-    const span = Math.max(1, curr.t - prev.t)
-    const u = prev === curr ? 1 : Math.min(1, Math.max(0, (when - prev.t) / span))
-    return { prev, curr, u }
-  }
-
-  function remotePose(id, now) {
-    const span = sampleSpan(now)
-    if (!span) return null
-    const a = span.prev.players.find((p) => p.id === id)
-    const b = span.curr.players.find((p) => p.id === id)
-    if (!b) return null
-    const from = a || b
-    return {
-      x: from.x + (b.x - from.x) * span.u,
-      z: from.z + (b.z - from.z) * span.u,
-      yaw: mixAngle(from.yaw, b.yaw, span.u),
-    }
   }
 
   function damp(a, b, lambda, dt) {
@@ -547,19 +532,20 @@ export async function createWorld(canvas) {
       for (const p of snap.players) {
         const duck = ensureDuck(p)
         const view = shown.get(p.id)
-        const usePred = pred && p.id === meId && ['idle', 'walk', 'sprint'].includes(p.anim)
-        const remote = p.id === meId ? null : remotePose(p.id, now)
-        if (remote) {
-          view.x = remote.x
-          view.z = remote.z
-          view.yaw = remote.yaw
+        const mine = p.id === meId
+        const usePred = mine && pred && snap.phase === 'play' && ['idle', 'walk', 'sprint'].includes(p.anim)
+        if (usePred) {
+          view.x = pred.x
+          view.z = pred.z
+          view.yaw = pred.yaw
+        } else if (mine) {
+          view.x = p.x
+          view.z = p.z
+          view.yaw = p.yaw
         } else {
-          const tx = usePred ? pred.x : p.x
-          const tz = usePred ? pred.z : p.z
-          const ty = usePred ? pred.yaw : p.yaw
-          view.x = damp(view.x, tx, 36, dt)
-          view.z = damp(view.z, tz, 36, dt)
-          view.yaw = dampAngle(view.yaw, ty, 28, dt)
+          view.x = damp(view.x, p.x, 18, dt)
+          view.z = damp(view.z, p.z, 18, dt)
+          view.yaw = dampAngle(view.yaw, p.yaw, 16, dt)
         }
         duck.root.position.set(view.x, 0, view.z)
         duck.apply(p.anim || 'idle', p.animT || demoT, view.yaw)
@@ -567,31 +553,30 @@ export async function createWorld(canvas) {
       let bx = snap.ball.x
       let by = snap.ball.y
       let bz = snap.ball.z
-      const ballSpan = sampleSpan(now)
-      if (ballSpan && !(me && snap.ball.owner === meId)) {
-        const from = ballSpan.prev.ball
-        const to = ballSpan.curr.ball
-        bx = from.x + (to.x - from.x) * ballSpan.u
-        by = from.y + (to.y - from.y) * ballSpan.u
-        bz = from.z + (to.z - from.z) * ballSpan.u
-      }
-      if (me && snap.ball.owner === meId && pred) {
+      const ownBall = me && snap.ball.owner === meId && pred
+      if (ownBall) {
         bx = pred.x + Math.sin(pred.yaw) * DRIBBLE
         bz = pred.z + Math.cos(pred.yaw) * DRIBBLE
         by = 0.078
+        ballShown.x = bx
+        ballShown.y = by
+        ballShown.z = bz
+      } else {
+        ballShown.x = damp(ballShown.x, bx, 22, dt)
+        ballShown.y = damp(ballShown.y, by, 22, dt)
+        ballShown.z = damp(ballShown.z, bz, 22, dt)
       }
-      ballShown.x = damp(ballShown.x, bx, 28, dt)
-      ballShown.y = damp(ballShown.y, by, 28, dt)
-      ballShown.z = damp(ballShown.z, bz, 28, dt)
       ball.position.set(ballShown.x, Math.max(0.078, ballShown.y), ballShown.z)
       ballShadow.position.set(ball.position.x, 0.01, ball.position.z)
       const follow = me ? shown.get(me.id) : null
-      const yaw = (follow ? follow.yaw : 0) + orbit
-      aimYaw = yaw
+      const face = follow ? follow.yaw : camYaw
+      const moving = pred && Math.hypot(pred.cmd.mx || 0, pred.cmd.mz || 0) > 0.05
+      if (!moving) camYaw = dampAngle(camYaw, face + orbit, 12, dt)
+      aimYaw = camYaw
       const dist = 1.35
       const focus = follow || { x: snap.ball.x, z: snap.ball.z }
-      camera.position.set(focus.x - Math.sin(yaw) * dist, 0.78, focus.z - Math.cos(yaw) * dist)
-      camera.lookAt(focus.x + Math.sin(yaw) * 0.35, 0.14, focus.z + Math.cos(yaw) * 0.35)
+      camera.position.set(focus.x - Math.sin(camYaw) * dist, 0.78, focus.z - Math.cos(camYaw) * dist)
+      camera.lookAt(focus.x + Math.sin(camYaw) * 0.35, 0.14, focus.z + Math.cos(camYaw) * 0.35)
     }
     for (let i = sparks.length - 1; i >= 0; i--) {
       const s = sparks[i]
@@ -641,11 +626,10 @@ export async function createWorld(canvas) {
       meId = String(nextId)
       pred = null
       orbit = 0
-      samples.length = 0
+      camYaw = 0
     },
     pushSnap(next, input) {
       snap = next
-      noteSample(next)
       const me = next.players.find((p) => p.id === meId)
       if (!me) return
       if (!pred) {
@@ -670,18 +654,16 @@ export async function createWorld(canvas) {
           team: me.team,
           id: me.id,
         }
+        camYaw = me.yaw
       }
       if (input) pred.cmd = input
       const err = Math.hypot(pred.x - me.x, pred.z - me.z)
-      if (err > 1 || !['idle', 'walk', 'sprint'].includes(me.anim)) {
+      if (err > 0.6 || !['idle', 'walk', 'sprint'].includes(me.anim)) {
         pred.x = me.x
         pred.z = me.z
         pred.yaw = me.yaw
         pred.vx = me.vx
         pred.vz = me.vz
-      } else {
-        pred.x += (me.x - pred.x) * 0.2
-        pred.z += (me.z - pred.z) * 0.2
       }
       pred.team = me.team
       pred.stamina = me.stamina
@@ -703,5 +685,17 @@ export async function createWorld(canvas) {
       }
     },
     stop() { running = false },
+    setQuality(low) {
+      simple = !!low
+      const alias = renderer.getContext().getContextAttributes()?.antialias
+      if (!!alias === simple) {
+        renderer.dispose()
+        renderer = makeRenderer(canvas, simple)
+      } else {
+        renderer.setPixelRatio(simple ? 1 : Math.min(window.devicePixelRatio || 1, 2))
+      }
+      retint(scene, simple)
+      resize()
+    },
   }
 }
