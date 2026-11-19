@@ -159,14 +159,22 @@ export function makePlayer(raw, team) {
   }
 }
 
-function spotsFor(mode, team, length) {
+function spotsFor(match, team) {
+  const mode = match.mode
   const sign = team === 'A' ? -1 : 1
-  const hl = length / 2
-  if (mode === '3v3') {
+  const hl = match.length / 2
+  if (mode === '3v3' && match.goalies !== false) {
     return [
       { x: 0, z: sign * (hl - 0.4), goalie: true },
       { x: -0.9, z: sign * 1.45 },
       { x: 0.9, z: sign * 1.45 },
+    ]
+  }
+  if (mode === '3v3') {
+    return [
+      { x: 0, z: sign * 1.2 },
+      { x: -0.9, z: sign * 1.55 },
+      { x: 0.9, z: sign * 1.55 },
     ]
   }
   if (mode === '2v2') {
@@ -178,8 +186,8 @@ function spotsFor(mode, team, length) {
   return [{ x: 0, z: sign * 1.15 }]
 }
 
-function assignGoalies(players, mode) {
-  if (mode !== '3v3') {
+function assignGoalies(players, mode, goalies) {
+  if (mode !== '3v3' || goalies === false) {
     for (const p of players) p.goalie = false
     return
   }
@@ -206,14 +214,16 @@ export function createMatch({
   awayLogo = null,
   clubName = null,
   difficulty = null,
+  goalies = true,
 }) {
   if (!MODES[mode]) throw new Error('Unknown mode')
   if (!MATCH_MINUTES.includes(minutes) && minutes !== 0) {
     // minutes === 0 is rejected for real rooms. Tests pass 3 or 5.
   }
   const spec = MODES[mode]
+  const useGoalies = mode === '3v3' && goalies !== false
   const made = players.map((p) => makePlayer(p, p.team || 'A'))
-  assignGoalies(made, mode)
+  assignGoalies(made, mode, useGoalies)
   const match = {
     id: String(id),
     mode,
@@ -239,6 +249,7 @@ export function createMatch({
     awayLogo,
     clubName,
     difficulty: difficulty || null,
+    goalies: useGoalies,
     over: false,
     players: made,
     ball: {
@@ -262,7 +273,7 @@ function placeKickoff(match, team) {
   match.kickoffTeam = team
   for (const side of ['A', 'B']) {
     const group = match.players.filter((p) => p.team === side)
-    const layout = spotsFor(match.mode, side, match.length)
+    const layout = spotsFor(match, side)
     const keeper = group.find((p) => p.goalie)
     const others = group.filter((p) => p !== keeper)
     const open = layout.filter((s) => !s.goalie)
@@ -317,6 +328,8 @@ export function setInput(match, id, msg) {
     p.cmd.mz /= mag
   }
   p.cmd.sprint = !!msg.sprint
+  const power = Number(msg.power)
+  if (Number.isFinite(power)) p.cmd.power = clamp(power, 0, 1)
   const sens = Number(msg.sens)
   p.cmd.sens = Number.isFinite(sens) ? clamp(sens, 0.7, 1.3) : 1
   if (Number.isFinite(msg.seq)) p.ack = msg.seq | 0
@@ -428,7 +441,14 @@ function handleButtons(match, p) {
   }
   if (p.pressed.kick && hasBall(match, p) && p.spinning <= 0) {
     nudgeTowardGoal(match, p)
-    releaseBall(match, p, KICK_SPEED, KICK_LIFT, false)
+    let speed = KICK_SPEED
+    let lift = KICK_LIFT
+    if (p.goalie && Number.isFinite(p.cmd.power)) {
+      const pow = clamp(p.cmd.power, 0.15, 1)
+      speed = KICK_SPEED * (0.42 + 0.78 * pow)
+      lift = KICK_LIFT * (0.55 + 0.7 * pow)
+    }
+    releaseBall(match, p, speed, lift, false)
   } else if (p.pressed.pass && hasBall(match, p) && p.spinning <= 0) {
     const mate = aimAtTeammate(match, p)
     if (mate) {
@@ -948,6 +968,7 @@ export function snapshot(match) {
     awayLogo: match.awayLogo,
     clubName: match.clubName,
     difficulty: match.difficulty || null,
+    goalies: match.goalies !== false && match.mode === '3v3',
     field: { length: match.length, width: match.width, goalW: match.goalW, goalH: match.goalH },
     ball: {
       x: r(match.ball.x),

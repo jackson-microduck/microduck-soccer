@@ -106,7 +106,7 @@ test('headless browser clicks signup, club logos, and a bot match', { timeout: 9
     await click('Create club')
     await sleep(600)
     assert.match(await evalJs('document.body.innerText'), /Pond United/)
-    assert.match(await evalJs('document.body.innerText'), /Leaderboard/)
+    assert.match(await evalJs('document.body.innerText'), /Clubs I own/)
 
     await click('Use this logo')
     await sleep(700)

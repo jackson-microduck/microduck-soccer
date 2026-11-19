@@ -32,6 +32,10 @@ const state = {
   practice: false,
   difficulty: 'medium',
   botGoalie: false,
+  goalies: true,
+  owned: [],
+  joined: [],
+  ranks: null,
   toast: '',
 }
 
@@ -195,13 +199,23 @@ function incomingNote(note) {
   else toast(note.body)
 }
 
+function applyClubs(data) {
+  if (!data) return
+  if ('club' in data) state.club = data.club
+  if (data.owned) state.owned = data.owned
+  if (data.joined) state.joined = data.joined
+}
+
 async function refreshMe() {
   const data = await api('/api/me')
   state.me = data.user
-  if (state.me?.club) {
-    const club = await api('/api/clubs/mine')
-    state.club = club.club
-  } else state.club = null
+  if (state.me) {
+    applyClubs(await api('/api/clubs/mine'))
+  } else {
+    state.club = null
+    state.owned = []
+    state.joined = []
+  }
 }
 
 async function refreshNotes() {
@@ -236,6 +250,7 @@ function shell() {
   else if (!state.me) root.append(authCard())
   else if (state.screen === 'directory') root.append(directoryCard())
   else if (state.screen === 'club') root.append(clubCard())
+  else if (state.screen === 'ranks') root.append(ranksCard())
   else if (state.screen === 'lobby') root.append(lobbyCard())
   else if (state.screen === 'results') root.append(resultsCard())
   else root.append(homeCard())
@@ -410,6 +425,7 @@ function homeCard() {
   actions.append(
     button('Play vs bots', 'primary', () => { state.screen = 'lobby'; state.error = ''; render() }),
     button('Club', 'ghost', () => { state.screen = 'club'; render() }),
+    button('Ranks', 'ghost', () => { state.screen = 'ranks'; loadRanks(); render() }),
     button('Find friends', 'ghost', () => { state.screen = 'directory'; loadDirectory(); render() }),
     button('Controls', 'ghost', () => openHelp(hero)),
   )
@@ -497,6 +513,12 @@ function noteCard(note) {
     extra.textContent = others.length
       ? `Also invited: ${others.join(', ')}. ${note.payload.mode} · ${note.payload.minutes} min.`
       : `You are the only one invited this round. ${note.payload.mode} · ${note.payload.minutes} min.`
+  } else if (note.kind === 'club_challenge') {
+    extra.textContent = 'Club challenge. Accept to open the match, or decline.'
+  } else if (note.kind === 'club_match') {
+    extra.textContent = `${note.payload.mode} · ${note.payload.minutes} min. Accept to join the room.`
+  } else if (note.kind === 'club_challenge_result') {
+    extra.textContent = 'Challenge update'
   } else extra.textContent = 'Club invite'
   text.append(extra)
   const actions = document.createElement('div')
@@ -509,8 +531,9 @@ function noteCard(note) {
 }
 
 async function acceptNote(note) {
-  if (note.kind === 'match_invite') {
-    state.pendingNote = note
+  if (note.kind === 'match_invite' || note.kind === 'club_match') {
+    if (note.kind === 'match_invite') state.pendingNote = note
+    else api(`/api/notifications/${note.id}/respond`, { action: 'accept' }).then(refreshNotes).catch(() => {})
     state.screen = 'lobby'
     render()
     send({ t: 'join', code: note.payload.roomCode })
@@ -519,8 +542,15 @@ async function acceptNote(note) {
   try {
     const data = await api(`/api/notifications/${note.id}/respond`, { action: 'accept' })
     state.me = data.user
-    state.club = data.club
+    applyClubs(data)
+    await refreshMe()
     await refreshNotes()
+    if (data.roomCode) {
+      state.screen = 'lobby'
+      render()
+      send({ t: 'join', code: data.roomCode })
+      return
+    }
     render()
   } catch (err) {
     toast(err.message)
@@ -646,50 +676,102 @@ function logoImg(src, name, color) {
   return img
 }
 
+function clubList(title, rows, empty) {
+  const block = document.createElement('div')
+  block.append(h('h3', title))
+  if (!rows.length) {
+    block.append(p(empty, 'muted'))
+    return block
+  }
+  const list = document.createElement('div')
+  list.className = 'list'
+  for (const club of rows) {
+    const row = document.createElement('div')
+    row.className = `member${state.club && state.club.id === club.id ? ' you' : ''}`
+    row.append(logoImg(club.logo, club.name, '#ff6a1a'))
+    const info = document.createElement('div')
+    info.className = 'grow'
+    const name = document.createElement('b')
+    name.textContent = club.name
+    const meta = document.createElement('div')
+    meta.className = 'muted'
+    meta.textContent = state.club && state.club.id === club.id ? 'Active club' : club.role === 'owner' ? 'You own this' : 'Joined'
+    info.append(name, meta)
+    const actions = document.createElement('div')
+    actions.className = 'actions'
+    if (!state.club || state.club.id !== club.id) {
+      actions.append(button('Switch', 'ghost', async () => {
+        try {
+          applyClubs(await api('/api/clubs/active', { id: club.id }))
+          await refreshMe()
+          render()
+        } catch (err) { toast(err.message) }
+      }))
+    }
+    actions.append(button('Leave', 'danger', async () => {
+      try {
+        applyClubs(await api('/api/clubs/leave', { clubId: club.id }))
+        await refreshMe()
+        render()
+      } catch (err) { toast(err.message) }
+    }))
+    row.append(info, actions)
+    list.append(row)
+  }
+  block.append(list)
+  return block
+}
+
 function clubCard() {
   const box = card()
-  if (!state.club) {
-    box.append(h('h2', 'Start a club'))
-    box.append(p('A club is your friend group. Share the code, or invite someone from the directory and let them accept.'))
+  box.append(h('h2', 'Clubs'))
+  box.append(p('You can own up to 8 clubs and join as many as you like. The active club is the one invites, the logo, and club matches use.'))
+  box.append(clubList('Clubs I own', state.owned, 'You do not own a club yet.'))
+  box.append(clubList('Clubs I’ve joined', state.joined, 'You have not joined a club yet.'))
+  if (state.owned.length < 8) {
     const name = document.createElement('input')
     name.maxLength = 24
-    name.placeholder = 'Pond United'
+    name.placeholder = 'New club name'
     const code = document.createElement('input')
     code.maxLength = 8
     code.placeholder = 'Join with a code'
     const err = p(state.error, 'error')
-    box.append(name, button('Create club', 'primary', async () => {
+    box.append(h('h3', state.owned.length ? 'Add another club' : 'Start a club'), name, button('Create club', 'primary', async () => {
       try {
-        const data = await api('/api/clubs', { name: name.value })
-        state.club = data.club
+        await api('/api/clubs', { name: name.value })
         await refreshMe()
         state.error = ''
         render()
       } catch (err) { state.error = err.message; render() }
     }), code, button('Join with code', 'ghost', async () => {
       try {
-        const data = await api('/api/clubs/join', { code: code.value })
-        state.club = data.club
+        await api('/api/clubs/join', { code: code.value })
         await refreshMe()
         state.error = ''
         render()
       } catch (err) { state.error = err.message; render() }
     }), err)
-    return box
   }
+  if (!state.club) return box
   const head = document.createElement('div')
-  head.className = 'member'
+  head.className = 'member you'
   head.append(logoImg(state.club.logo, state.club.name, '#ff6a1a'))
   const text = document.createElement('div')
   const title = document.createElement('h2')
   title.textContent = state.club.name
-  text.append(title, p(`Code ${state.club.code} · led by ${state.club.owner}`))
+  text.append(title, p(`Active · code ${state.club.code} · led by ${state.club.owner}`))
   head.append(text)
   box.append(head)
   const totals = document.createElement('div')
   totals.className = 'stats'
-  totals.append(stat(state.club.totals.goals, 'Goals'), stat(state.club.totals.assists, 'Assists'), stat(state.club.totals.wins, 'Wins'))
-  box.append(totals, h('h3', 'Leaderboard'))
+  const record = state.club.record || { wins: 0, goalsFor: 0, goalsAgainst: 0 }
+  totals.append(
+    stat(state.club.totals.goals, 'Goals'),
+    stat(state.club.totals.wins, 'Player wins'),
+    stat(record.wins, 'Club wins'),
+    stat((record.goalsFor || 0) - (record.goalsAgainst || 0), 'Goal diff'),
+  )
+  box.append(totals, h('h3', 'Players'))
   const list = document.createElement('div')
   list.className = 'list'
   state.club.members.forEach((member, index) => {
@@ -725,16 +807,110 @@ function clubCard() {
       },
     })
   }
-  box.append(button('Leave club', 'danger', async () => {
-    try {
-      await api('/api/clubs/leave', {})
-      state.club = null
-      await refreshMe()
-      render()
-    } catch (err) {
-      toast(err.message)
+  if (state.club.ownerId === state.me.id) {
+    box.append(h('h3', 'Challenge another club'))
+    const opponent = document.createElement('input')
+    opponent.maxLength = 24
+    opponent.placeholder = 'Their club name'
+    box.append(opponent, p(`Sends a ${state.mode} · ${state.minutes} min${state.mode === '3v3' ? (state.goalies ? ' · goalies' : ' · no goalies') : ''} challenge. Set that in Match first.`, 'muted'))
+    box.append(button('Send challenge', 'primary', async () => {
+      try {
+        await api('/api/clubs/challenge', {
+          name: opponent.value,
+          mode: state.mode,
+          minutes: state.minutes,
+          goalies: state.mode === '3v3' && state.goalies !== false,
+        })
+        toast('Challenge sent')
+      } catch (err) { toast(err.message) }
+    }))
+  }
+  return box
+}
+
+async function loadRanks() {
+  state.ranks = { status: 'loading' }
+  try {
+    state.ranks = await api('/api/leaderboards')
+  } catch (err) {
+    state.ranks = { status: err.message }
+  }
+  if (state.screen === 'ranks') render()
+}
+
+function rankRow(place, title, meta, mine) {
+  const row = document.createElement('div')
+  row.className = `member${mine ? ' you' : ''}`
+  const badge = document.createElement('b')
+  badge.textContent = String(place)
+  const info = document.createElement('div')
+  info.className = 'grow'
+  const name = document.createElement('b')
+  name.textContent = title
+  const sub = document.createElement('div')
+  sub.className = 'muted'
+  sub.textContent = meta
+  info.append(name, sub)
+  row.append(badge, info)
+  return row
+}
+
+function ranksCard() {
+  const box = card()
+  box.append(h('h2', 'Ranks'))
+  box.append(p('Bots stay off both lists. Your row stays highlighted, even when you are outside the top 10. Club ranks use wins, then goal difference.'))
+  if (!state.ranks || state.ranks.status === 'loading') {
+    box.append(p('Loading ranks…', 'muted'))
+    return box
+  }
+  if (state.ranks.status && !state.ranks.players) {
+    box.append(p(state.ranks.status, 'error'))
+    return box
+  }
+  const yours = new Set((state.ranks.yourClubs || []).map((club) => club.id))
+  box.append(h('h3', 'Top clubs'))
+  const clubs = document.createElement('div')
+  clubs.className = 'list'
+  const clubRows = state.ranks.clubs || []
+  if (!clubRows.length) clubs.append(p('No clubs yet.', 'muted'))
+  for (const club of clubRows) {
+    clubs.append(rankRow(
+      club.rank,
+      club.name,
+      `${club.points} pts · ${club.wins}-${club.draws}-${club.losses} · GD ${club.goalDifference}`,
+      yours.has(club.id),
+    ))
+  }
+  box.append(clubs)
+  const outside = (state.ranks.yourClubs || []).filter((club) => !clubRows.some((row) => row.id === club.id))
+  if (outside.length) {
+    box.append(h('h3', 'Your clubs'))
+    const mine = document.createElement('div')
+    mine.className = 'list'
+    for (const club of outside) {
+      mine.append(rankRow(club.rank, club.name, `${club.points} pts · GD ${club.goalDifference}`, true))
     }
-  }))
+    box.append(mine)
+  }
+  box.append(h('h3', 'Top players'))
+  const players = document.createElement('div')
+  players.className = 'list'
+  const playerRows = state.ranks.players || []
+  if (!playerRows.length) players.append(p('No players yet.', 'muted'))
+  const youInList = playerRows.some((row) => row.id === state.me.id)
+  for (const player of playerRows) {
+    players.append(rankRow(
+      player.rank,
+      player.username,
+      `${player.rating} · ${player.goals} goals · ${player.wins} wins`,
+      player.id === state.me.id,
+    ))
+  }
+  if (state.ranks.you && !youInList) {
+    const you = state.ranks.you
+    players.append(rankRow(you.rank, `${you.username} (you)`, `${you.rating} · ${you.goals} goals · ${you.wins} wins`, true))
+  }
+  box.append(players)
   return box
 }
 
@@ -742,7 +918,8 @@ function lobbyCard() {
   const box = card()
   box.append(h('h2', 'Match'))
   if (state.queue) {
-    box.append(p(`Looking for a ${state.queue.mode} · ${state.queue.minutes} min. ${state.queue.count}/${state.queue.need} ducks in the queue.`))
+    const keeper = state.queue.mode === '3v3' ? (state.queue.goalies === false ? ' · no goalies' : ' · goalies') : ''
+    box.append(p(`Looking for a ${state.queue.mode} · ${state.queue.minutes} min${keeper}. ${state.queue.count}/${state.queue.need} ducks in the queue.`))
     box.append(button('Leave queue', 'ghost', () => send({ t: 'leave-queue' })))
     return box
   }
@@ -755,7 +932,7 @@ function lobbyCard() {
     const b = document.createElement('button')
     b.type = 'button'
     b.className = `mode${state.mode === mode ? ' on' : ''}`
-    b.textContent = mode === '3v3' ? '3v3 + GK' : mode
+    b.textContent = mode
     b.addEventListener('click', () => { state.mode = mode; render() })
     modes.append(b)
   }
@@ -768,6 +945,18 @@ function lobbyCard() {
     b.textContent = `${value} min`
     b.addEventListener('click', () => { state.minutes = value; render() })
     minutes.append(b)
+  }
+  const keepers = document.createElement('div')
+  keepers.className = 'modes'
+  if (state.mode === '3v3') {
+    for (const [on, label] of [[true, 'Goalies'], [false, 'No goalies']]) {
+      const b = document.createElement('button')
+      b.type = 'button'
+      b.className = `minute${state.goalies !== false === on ? ' on' : ''}`
+      b.textContent = label
+      b.addEventListener('click', () => { state.goalies = on; render() })
+      keepers.append(b)
+    }
   }
   const levels = document.createElement('div')
   levels.className = 'modes'
@@ -783,10 +972,12 @@ function lobbyCard() {
   botGoalie.className = 'check'
   const botGoalieInput = document.createElement('input')
   botGoalieInput.type = 'checkbox'
-  botGoalieInput.checked = state.botGoalie && state.mode === '3v3'
-  botGoalieInput.disabled = state.mode !== '3v3'
+  botGoalieInput.checked = state.botGoalie && state.mode === '3v3' && state.goalies !== false
+  botGoalieInput.disabled = state.mode !== '3v3' || state.goalies === false
   botGoalieInput.addEventListener('change', () => { state.botGoalie = botGoalieInput.checked })
-  botGoalie.append(botGoalieInput, document.createTextNode(state.mode === '3v3' ? 'I will play goalie against the bots' : 'Goalies are only in 3v3'))
+  botGoalie.append(botGoalieInput, document.createTextNode(
+    state.mode !== '3v3' ? 'Goalies are only in 3v3' : state.goalies === false ? 'This 3v3 has no goalies' : 'I will play goalie against the bots',
+  ))
   const club = document.createElement('label')
   club.className = 'check'
   const clubInput = document.createElement('input')
@@ -824,20 +1015,30 @@ function lobbyCard() {
         mode: state.mode,
         minutes: state.minutes,
         difficulty: state.difficulty,
-        goalie: state.botGoalie && state.mode === '3v3',
+        goalie: state.botGoalie && state.mode === '3v3' && state.goalies !== false,
+        goalies: state.mode === '3v3' && state.goalies !== false,
       })
     }),
     button('Queue ranked', 'ghost', () => {
-      send({ t: 'queue', mode: state.mode, minutes: state.minutes })
+      send({ t: 'queue', mode: state.mode, minutes: state.minutes, goalies: state.mode === '3v3' && state.goalies !== false })
     }),
     button('Create room', 'ghost', () => {
-      send({ t: 'host', mode: state.mode, minutes: state.minutes, clubOnly: state.clubOnly && !!state.club, practice: state.practice })
+      send({
+        t: 'host',
+        mode: state.mode,
+        minutes: state.minutes,
+        clubOnly: state.clubOnly && !!state.club,
+        practice: state.practice,
+        goalies: state.mode === '3v3' && state.goalies !== false,
+      })
     }),
   )
   const join = document.createElement('input')
   join.placeholder = 'Room code'
   join.maxLength = 6
-  box.append(modes, h('h3', 'Length'), minutes, h('h3', 'Bot difficulty'), levels, botGoalie, club, practice, sensLabel, sens, err, actions, join, button('Join code', 'ghost', () => {
+  box.append(modes, h('h3', 'Length'), minutes)
+  if (state.mode === '3v3') box.append(h('h3', '3v3 goalies'), keepers)
+  box.append(h('h3', 'Bot difficulty'), levels, botGoalie, club, practice, sensLabel, sens, err, actions, join, button('Join code', 'ghost', () => {
     send({ t: 'join', code: join.value.trim().toUpperCase() })
   }))
   return box
@@ -845,19 +1046,67 @@ function lobbyCard() {
 
 function roomCard(box) {
   const room = state.room
-  box.append(h('h2', `${room.mode} · ${room.minutes} min`))
-  if (room.clubName) box.append(p(`Club match · ${room.clubName}`))
+  const keeper = room.mode === '3v3' ? (room.goalies === false ? ' · no goalies' : ' · goalies') : ''
+  box.append(h('h2', `${room.mode} · ${room.minutes} min${keeper}`))
+  if (room.versus) box.append(p(`Club vs club · ${room.clubName} vs ${room.awayName}`))
+  else if (room.clubName) box.append(p(`Club match · ${room.clubName}`))
   const code = document.createElement('div')
   code.className = 'code'
   code.textContent = room.code
-  box.append(code, p(room.practice ? 'Practice ducks will fill empty spots. Ranked rating stays put.' : 'Teams are balanced by rating when the host starts.'))
+  const mine = room.hostId === state.me.id
+  const clubRoom = !!(room.clubId || room.versus)
+  box.append(code, p(
+    room.versus
+      ? 'Both clubs ready up. The challenging owner starts when each side is full and ready.'
+      : room.practice
+        ? 'Practice ducks will fill empty spots. Ranked rating stays put.'
+        : clubRoom
+          ? 'The owner sets the match. Everyone else presses Ready, then the owner starts.'
+          : 'Teams are balanced by rating when the host starts.',
+  ))
+  if (clubRoom && mine && !room.versus) {
+    const modes = document.createElement('div')
+    modes.className = 'modes'
+    for (const mode of ['1v1', '2v2', '3v3']) {
+      const b = document.createElement('button')
+      b.type = 'button'
+      b.className = `mode${room.mode === mode ? ' on' : ''}`
+      b.textContent = mode
+      b.addEventListener('click', () => send({ t: 'options', mode, minutes: room.minutes, goalies: mode === '3v3' && room.goalies !== false }))
+      modes.append(b)
+    }
+    const minutes = document.createElement('div')
+    minutes.className = 'modes'
+    for (const value of [3, 5]) {
+      const b = document.createElement('button')
+      b.type = 'button'
+      b.className = `minute${room.minutes === value ? ' on' : ''}`
+      b.textContent = `${value} min`
+      b.addEventListener('click', () => send({ t: 'options', mode: room.mode, minutes: value, goalies: room.goalies !== false }))
+      minutes.append(b)
+    }
+    box.append(modes, minutes)
+    if (room.mode === '3v3') {
+      const keepers = document.createElement('div')
+      keepers.className = 'modes'
+      for (const [on, label] of [[true, 'Goalies'], [false, 'No goalies']]) {
+        const b = document.createElement('button')
+        b.type = 'button'
+        b.className = `minute${(room.goalies !== false) === on ? ' on' : ''}`
+        b.textContent = label
+        b.addEventListener('click', () => send({ t: 'options', mode: room.mode, minutes: room.minutes, goalies: on }))
+        keepers.append(b)
+      }
+      box.append(keepers)
+    }
+  }
   const list = document.createElement('div')
   list.className = 'list'
   for (const player of room.players) {
     const row = document.createElement('div')
     row.className = 'member'
     const name = document.createElement('b')
-    name.textContent = `${player.name}${player.id === room.hostId ? ' · host' : ''}${player.goalie ? ' · goalie' : ''}`
+    name.textContent = `${player.name}${player.id === room.hostId ? (clubRoom ? ' · owner' : ' · host') : ''}${player.side === 'A' ? ' · home' : ''}${player.side === 'B' ? ' · away' : ''}${player.goalie ? ' · goalie' : ''}${clubRoom && player.ready ? ' · ready' : ''}`
     const meta = document.createElement('span')
     meta.className = 'muted'
     meta.textContent = `${rankFor(player.rating)} ${player.rating}`
@@ -865,16 +1114,19 @@ function roomCard(box) {
     list.append(row)
   }
   box.append(list)
-  if (room.mode === '3v3') {
-    const me = room.players.find((p) => p.id === state.me.id)
+  const me = room.players.find((p) => p.id === state.me.id)
+  if (room.mode === '3v3' && room.goalies !== false) {
     box.append(button(me?.goalie ? 'Goalie spot claimed' : 'I will play goalie', 'ghost', () => {
       send({ t: 'goalie', on: !me?.goalie })
     }))
   }
-  if (room.clubId && room.hostId === state.me.id) box.append(invitePicker(room))
+  if (room.clubId && mine && !room.versus) box.append(invitePicker(room))
   const actions = document.createElement('div')
   actions.className = 'actions'
-  if (room.hostId === state.me.id) actions.append(button('Start match', 'primary', () => send({ t: 'start' })))
+  if (clubRoom && !mine) {
+    actions.append(button(me?.ready ? 'Not ready' : 'Ready', 'primary', () => send({ t: 'ready' })))
+  }
+  if (mine) actions.append(button('Start match', 'primary', () => send({ t: 'start' })))
   actions.append(button('Leave room', 'ghost', () => send({ t: 'leave' })))
   box.append(p(state.error, 'error'), actions)
   return box
@@ -1000,6 +1252,42 @@ function updateHud(snap) {
     banner.append(title)
   } else banner.classList.add('hidden')
   buildPad()
+  paintPower()
+}
+
+function goalieCharging() {
+  const snap = state.snap
+  if (state.screen !== 'match' || !snap || snap.phase !== 'play') return false
+  const me = snap.players?.find((p) => p.id === String(state.me?.id))
+  return !!(me?.goalie && snap.ball?.owner === String(state.me.id))
+}
+
+function livePower() {
+  const wave = 0.5 + 0.5 * Math.sin(performance.now() / 1000 * 2.6)
+  return Math.round((0.15 + 0.85 * wave) * 100) / 100
+}
+
+function lockPowerKick() {
+  input.power = livePower()
+  input.kick += 1
+  playKick()
+  flushInput()
+}
+
+function paintPower() {
+  const el = document.getElementById('power')
+  if (!el) return
+  const on = goalieCharging()
+  el.classList.toggle('hidden', !on)
+  if (!on) return
+  const power = livePower()
+  const fill = document.getElementById('power-fill')
+  if (fill) fill.style.width = `${Math.round(power * 100)}%`
+  const hint = document.getElementById('power-hint')
+  if (hint) {
+    const how = state.scheme === 'phone' ? 'Stop' : 'Enter'
+    hint.textContent = `${Math.round(power * 100)}% · press ${how}`
+  }
 }
 
 function buildPad() {
@@ -1007,6 +1295,7 @@ function buildPad() {
   const me = snap?.players?.find((p) => p.id === String(state.me?.id))
   const celebrate = snap?.phase === 'celebrate' && me && me.team === snap.celebrateTeam
   const waiting = snap?.phase === 'celebrate' && me && me.team !== snap.celebrateTeam
+  const charging = goalieCharging()
   const buttons = celebrate
     ? [['spin', 'Spin'], ['quack', 'Quack'], ['bob', 'Bob'], ['sit', 'Sit'], ['glide', 'Glide']]
     : waiting
@@ -1014,7 +1303,7 @@ function buildPad() {
       : [
           ['sprint', 'Sprint', true],
           ['spin', 'Spin'],
-          ['kick', 'Kick'],
+          charging ? ['stop', 'Stop'] : ['kick', 'Kick'],
           ['slide', 'Slide'],
           ['pass', 'Pass'],
           ...(me?.goalie ? [['dive', 'Dive']] : []),
@@ -1036,6 +1325,11 @@ function buildPad() {
       button.addEventListener('pointerup', up)
       button.addEventListener('pointercancel', up)
       button.addEventListener('pointerleave', up)
+    } else if (id === 'stop') {
+      button.addEventListener('pointerdown', (e) => {
+        e.preventDefault()
+        lockPowerKick()
+      })
     } else {
       button.addEventListener('pointerdown', (e) => {
         e.preventDefault()
@@ -1079,6 +1373,7 @@ function currentStick() {
     emote: input.emoteName,
     emoteId: input.emote,
     sens: readSens(),
+    ...(input.power == null ? {} : { power: input.power }),
   }
 }
 
@@ -1182,7 +1477,7 @@ function helpNode() {
   for (const line of [
     'Move with W A S D or the arrow keys. The camera stays behind your duck.',
     'Sprint: hold Shift. The stamina bar drains, then refills when you let go. Sprinting with the ball is slower than sprinting without it.',
-    'Kick: K or Space. Pass: J.',
+    'Kick: K or Space. Pass: J. When you are the goalie and you have the ball, the power bar slides. Press Enter to lock it and shoot.',
     'Slide tackle: C. If you miss, you are stunned briefly and the move goes on cooldown.',
     'Dribble spin: P. During the spin, and for a moment after, nobody can take the ball. A slide into it misses and stuns. It has a cooldown.',
     'Goalie dive (3v3 only): G. Dive to catch a shot.',
@@ -1198,7 +1493,7 @@ function helpNode() {
   for (const line of [
     'Drag the joystick to move.',
     'Hold Sprint. It uses the same stamina bar, and it is slower while you have the ball.',
-    'Tap Kick, Pass, Slide, or Spin. Spin is the dribble dodge.',
+    'Tap Kick, Pass, Slide, or Spin. Spin is the dribble dodge. As goalie with the ball, tap Stop when the power bar is where you want it.',
     'In 3v3 the goalie gets Dive instead of an extra button piled on the screen.',
     'After a goal the pad swaps to Spin, Quack, Bob, Sit, and Glide for the scoring team. The other team waits.',
   ]) {
@@ -1234,7 +1529,9 @@ function setupInput() {
     keys.add(e.code)
     if (state.screen !== 'match') return
     if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault()
-    if (e.code === 'KeyK' || e.code === 'Space') { input.kick += 1; playKick() }
+    if (e.code === 'Enter' && goalieCharging()) { e.preventDefault(); lockPowerKick() }
+    if ((e.code === 'KeyK' || e.code === 'Space') && goalieCharging()) lockPowerKick()
+    else if (e.code === 'KeyK' || e.code === 'Space') { input.kick += 1; playKick() }
     if (e.code === 'KeyJ') input.pass += 1
     if (e.code === 'KeyC') input.slide += 1
     if (e.code === 'KeyP') input.spin += 1
@@ -1300,7 +1597,7 @@ function setupInput() {
     render()
   })
   helpEl.addEventListener('click', (e) => { if (e.target === helpEl) helpEl.classList.add('hidden') })
-  setInterval(flushInput, 50)
+  setInterval(() => { paintPower(); flushInput() }, 50)
   window.addEventListener('resize', syncTouch)
   window.addEventListener('pointerdown', () => unlockAudio(), { once: true })
 }

@@ -25,7 +25,9 @@ npm start
 
 Friends on the same Wi-Fi can open `http://THAT-MAC-IP:8741`. Find the IP in System Settings → Network. If a phone cannot connect, allow incoming connections for Node when macOS asks.
 
-Accounts are saved in `data/league.sqlite` in this folder.
+Accounts are saved in `data/league.sqlite` in this folder. Older save files still open. New club lists and ranks are added the first time the game starts.
+
+A 3v3 can be played with goalies or without. When the goalie has the ball, a power bar slides in the scoreboard. Press Enter on a laptop, or Stop on a phone, to kick with that power. One account can own up to 8 clubs and join as many as it likes. The club owner sets the match, members press Ready, and owners can challenge another club. Ranks lists the top clubs and the top players, and it always shows your own place. Computer ducks are not on the ranks.
 
 ## Play on your computer
 

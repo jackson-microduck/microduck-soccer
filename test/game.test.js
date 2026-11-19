@@ -247,6 +247,42 @@ test('goalies exist only in 3v3 and a pass can earn an assist', () => {
   assert.equal(scorer.goals, 1)
 })
 
+test('a 3v3 can start with no goalies, and a goalie kick follows the power bar', () => {
+  const open = createMatch({
+    mode: '3v3',
+    minutes: 3,
+    goalies: false,
+    players: players(6).map((p, i) => ({ ...p, team: i < 3 ? 'A' : 'B' })),
+  })
+  assert.equal(open.goalies, false)
+  assert.equal(open.players.some((p) => p.goalie), false)
+
+  function shot(power) {
+    const match = createMatch({
+      mode: '3v3',
+      minutes: 3,
+      goalies: true,
+      players: players(6).map((p, i) => ({ ...p, team: i < 3 ? 'A' : 'B' })),
+    })
+    match.phase = 'play'
+    const gk = match.players.find((p) => p.goalie && p.team === 'A')
+    for (const p of match.players) {
+      if (p !== gk) { p.x = 5; p.z = 0 }
+    }
+    gk.x = 0
+    gk.z = 0
+    gk.yaw = 0
+    gk.vx = 0
+    gk.vz = 0
+    match.ball.owner = gk.id
+    gk.cmd.power = power
+    gk.pressed.kick = true
+    step(match, 1 / 30)
+    return Math.hypot(match.ball.vx, match.ball.vz)
+  }
+  assert.ok(shot(1) > shot(0.2) + 1)
+})
+
 test('rating rewards goals and assists, and teams get balanced by rank', () => {
   const plain = ratingDelta({ teamAvg: 1000, oppAvg: 1000, won: true, draw: false, goals: 0, assists: 0 })
   const star = ratingDelta({ teamAvg: 1000, oppAvg: 1000, won: true, draw: false, goals: 2, assists: 1 })

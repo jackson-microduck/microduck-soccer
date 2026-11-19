@@ -232,6 +232,25 @@ input[type="text"], input[type="password"], input[type="search"], input:not([typ
 .stamina { margin: 4px auto 0; height: 8px; width: 92px; background: #efe4d8; border-radius: 99px; overflow: hidden; }
 .stamina span { display: block; height: 100%; width: 100%; background: linear-gradient(90deg, #ffb000, #ff6a1a); }
 .stamina.low span { background: #ef4444; }
+.member.you { background: #fff1e4; border-radius: 14px; }
+#power {
+  position: absolute;
+  top: calc(max(8px, env(safe-area-inset-top)) + 86px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(280px, calc(100vw - 24px));
+  background: #1d2430;
+  color: white;
+  border-radius: 16px;
+  padding: 8px 12px 10px;
+  z-index: 24;
+  text-align: center;
+  box-shadow: 0 12px 28px rgba(20, 16, 8, 0.28);
+}
+#power b { letter-spacing: 0.14em; font-size: 13px; }
+.power-track { height: 18px; margin-top: 6px; background: #3a4454; border-radius: 99px; overflow: hidden; }
+#power-fill { display: block; height: 100%; width: 40%; background: linear-gradient(90deg, #7bd15c, #ffb000 55%, #ff3b30); }
+#power small { display: block; margin-top: 4px; font-weight: 800; }
 #club-line { font-size: 10px; color: var(--muted); font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px; margin: 2px auto 0; }
 .icon-btn {
   position: absolute;
@@ -366,6 +385,7 @@ body.playing { overflow: hidden; padding: 0; }
   }
   .nums { font-size: 1.05rem; }
   .scorebug img { width: 26px; height: 26px; }
+  #power { top: calc(max(8px, env(safe-area-inset-top)) + 132px); }
   #pad { bottom: max(72px, calc(48px + env(safe-area-inset-bottom))); }
   #pad button { background: #fff; border: 2px solid #ffd0b8; }
 }

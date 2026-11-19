@@ -13,15 +13,21 @@ import {
   verifyPassword,
 } from './auth.js'
 import {
+  addMembership,
   clubSummary,
   createNotification,
   getNotification,
   getUserById,
   getUserByName,
+  leaderboards,
   listNotifications,
+  membership,
+  myClubs,
   openDatabase,
+  ownedCount,
   publicUser,
   searchUsers,
+  setActiveClub,
   setNotificationStatus,
 } from './db.js'
 import { createHub } from './hub.js'
@@ -173,7 +179,9 @@ export function start(opts = {}) {
   app.post('/api/clubs', (req, res) => {
     const user = requireUser(req, res)
     if (!user) return
-    if (user.club_id) return res.status(400).json({ error: 'Leave your current club first.' })
+    if (ownedCount(db, user.id) >= 8) {
+      return res.status(400).json({ error: 'You can own up to 8 clubs.' })
+    }
     const name = String(req.body?.name || '').trim().replace(/\s+/g, ' ')
     if (!/^[A-Za-z0-9 ]{3,24}$/.test(name)) {
       return res.status(400).json({ error: 'Club names are 3–24 letters, numbers, and spaces.' })
@@ -184,39 +192,121 @@ export function start(opts = {}) {
     const info = db.prepare(
       'INSERT INTO clubs (name, code, owner_id, created_at) VALUES (?, ?, ?, ?)',
     ).run(name, code, user.id, now)
-    db.prepare('UPDATE users SET club_id = ? WHERE id = ?').run(Number(info.lastInsertRowid), user.id)
-    res.json({ club: clubSummary(db, Number(info.lastInsertRowid)) })
+    const clubId = Number(info.lastInsertRowid)
+    addMembership(db, user.id, clubId, 'owner')
+    setActiveClub(db, user.id, clubId)
+    res.json({ club: clubSummary(db, clubId) })
   })
 
   app.post('/api/clubs/join', (req, res) => {
     const user = requireUser(req, res)
     if (!user) return
-    if (user.club_id) return res.status(400).json({ error: 'Leave your current club first.' })
     const code = String(req.body?.code || '').trim().toUpperCase()
     const club = db.prepare('SELECT * FROM clubs WHERE code = ?').get(code)
     if (!club) return res.status(404).json({ error: 'No club uses that code.' })
-    db.prepare('UPDATE users SET club_id = ? WHERE id = ?').run(club.id, user.id)
+    if (membership(db, user.id, club.id)) return res.status(400).json({ error: 'You are already in that club.' })
+    addMembership(db, user.id, club.id, 'member')
+    if (!user.club_id) setActiveClub(db, user.id, club.id)
     res.json({ club: clubSummary(db, club.id) })
+  })
+
+  app.post('/api/clubs/active', (req, res) => {
+    const user = requireUser(req, res)
+    if (!user) return
+    const clubId = Number(req.body?.id)
+    if (!membership(db, user.id, clubId)) return res.status(403).json({ error: 'You are not in that club.' })
+    setActiveClub(db, user.id, clubId)
+    const lists = myClubs(db, user.id)
+    res.json({ club: clubSummary(db, clubId), owned: lists.owned, joined: lists.joined, user: publicUser(db, getUserById(db, user.id)) })
   })
 
   app.post('/api/clubs/leave', (req, res) => {
     const user = requireUser(req, res)
     if (!user) return
-    if (!user.club_id) return res.json({ ok: true })
-    const club = db.prepare('SELECT * FROM clubs WHERE id = ?').get(user.club_id)
-    db.prepare('UPDATE users SET club_id = NULL WHERE id = ?').run(user.id)
-    if (club && club.owner_id === user.id) {
-      const next = db.prepare('SELECT id FROM users WHERE club_id = ? ORDER BY id LIMIT 1').get(club.id)
-      if (next) db.prepare('UPDATE clubs SET owner_id = ? WHERE id = ?').run(next.id, club.id)
-      else db.prepare('DELETE FROM clubs WHERE id = ?').run(club.id)
+    const clubId = Number(req.body?.clubId) || user.club_id
+    if (!clubId || !membership(db, user.id, clubId)) {
+      return res.json({ ok: true, user: publicUser(db, getUserById(db, user.id)) })
     }
-    res.json({ ok: true, user: publicUser(db, getUserById(db, user.id)) })
+    const club = db.prepare('SELECT * FROM clubs WHERE id = ?').get(clubId)
+    db.prepare('DELETE FROM memberships WHERE user_id = ? AND club_id = ?').run(user.id, clubId)
+    if (club && club.owner_id === user.id) {
+      const next = db.prepare('SELECT user_id FROM memberships WHERE club_id = ? ORDER BY user_id LIMIT 1').get(clubId)
+      if (next) {
+        db.prepare(`UPDATE memberships SET role = 'owner' WHERE user_id = ? AND club_id = ?`).run(next.user_id, clubId)
+        db.prepare('UPDATE clubs SET owner_id = ? WHERE id = ?').run(next.user_id, clubId)
+      } else {
+        db.prepare('DELETE FROM clubs WHERE id = ?').run(clubId)
+      }
+    }
+    if (user.club_id === clubId) {
+      const next = db.prepare('SELECT club_id FROM memberships WHERE user_id = ? ORDER BY club_id LIMIT 1').get(user.id)
+      setActiveClub(db, user.id, next ? next.club_id : null)
+    }
+    const lists = myClubs(db, user.id)
+    const fresh = getUserById(db, user.id)
+    res.json({
+      ok: true,
+      user: publicUser(db, fresh),
+      club: fresh.club_id ? clubSummary(db, fresh.club_id) : null,
+      owned: lists.owned,
+      joined: lists.joined,
+    })
   })
 
   app.get('/api/clubs/mine', (req, res) => {
     const user = requireUser(req, res)
     if (!user) return
-    res.json({ club: user.club_id ? clubSummary(db, user.club_id) : null })
+    const lists = myClubs(db, user.id)
+    res.json({
+      club: user.club_id ? clubSummary(db, user.club_id) : null,
+      owned: lists.owned,
+      joined: lists.joined,
+    })
+  })
+
+  app.get('/api/leaderboards', (req, res) => {
+    const user = requireUser(req, res)
+    if (!user) return
+    res.json(leaderboards(db, user.id))
+  })
+
+  app.post('/api/clubs/challenge', (req, res) => {
+    const user = requireUser(req, res)
+    if (!user) return
+    if (!user.club_id) return res.status(400).json({ error: 'Pick a club you own first.' })
+    const from = db.prepare('SELECT * FROM clubs WHERE id = ?').get(user.club_id)
+    if (!from || from.owner_id !== user.id) return res.status(403).json({ error: 'Only a club owner can send a challenge.' })
+    const name = String(req.body?.name || '').trim()
+    const to = db.prepare('SELECT * FROM clubs WHERE name = ? COLLATE NOCASE').get(name)
+    if (!to) return res.status(404).json({ error: 'No club with that name.' })
+    if (to.id === from.id) return res.status(400).json({ error: 'Pick a different club.' })
+    const mode = req.body?.mode
+    const minutes = Number(req.body?.minutes)
+    if (!['1v1', '2v2', '3v3'].includes(mode) || ![3, 5].includes(minutes)) {
+      return res.status(400).json({ error: 'Pick 1v1, 2v2, or 3v3 and a 3 or 5 minute match.' })
+    }
+    const goalies = mode === '3v3' && req.body?.goalies !== false && req.body?.goalies !== 0 ? 1 : 0
+    const now = new Date().toISOString()
+    const info = db.prepare(
+      `INSERT INTO challenges (from_club_id, to_club_id, from_user_id, mode, minutes, goalies, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(from.id, to.id, user.id, mode, minutes, goalies, 'pending', now)
+    const keeper = mode === '3v3' ? (goalies ? 'with goalies' : 'with no goalies') : ''
+    const note = createNotification(db, {
+      userId: to.owner_id,
+      kind: 'club_challenge',
+      body: `${from.name} challenged ${to.name} to ${mode} · ${minutes} min${keeper ? ` ${keeper}` : ''}.`,
+      payload: {
+        challengeId: Number(info.lastInsertRowid),
+        fromClub: from.name,
+        toClub: to.name,
+        mode,
+        minutes,
+        goalies,
+      },
+    })
+    hub.pushNote(to.owner_id, note)
+    res.json({ ok: true })
   })
 
   app.get('/api/clubs/:id', (req, res) => {
@@ -225,7 +315,7 @@ export function start(opts = {}) {
     const clubId = routeId(req.params.id)
     const club = clubId ? clubSummary(db, clubId) : null
     if (!club) return res.status(404).json({ error: 'Club not found.' })
-    if (user.club_id !== club.id) club.code = null
+    if (!membership(db, user.id, club.id)) club.code = null
     res.json({ club })
   })
 
@@ -250,12 +340,13 @@ export function start(opts = {}) {
     const target = getUserByName(db, name)
     if (!target || target.is_bot) return res.status(404).json({ error: 'No player with that username.' })
     if (target.id === user.id) return res.status(400).json({ error: 'You are already in your club.' })
-    if (target.club_id) return res.status(400).json({ error: `${target.username} already plays for a club.` })
+    const club = db.prepare('SELECT * FROM clubs WHERE id = ?').get(user.club_id)
+    if (!club || club.owner_id !== user.id) return res.status(403).json({ error: 'Only the club owner can invite.' })
+    if (membership(db, target.id, club.id)) return res.status(400).json({ error: `${target.username} is already in this club.` })
     const existing = db.prepare(
       'SELECT id FROM club_invites WHERE club_id = ? AND invitee_id = ? AND status = ?',
     ).get(user.club_id, target.id, 'pending')
     if (existing) return res.status(400).json({ error: 'That invite is already waiting.' })
-    const club = db.prepare('SELECT * FROM clubs WHERE id = ?').get(user.club_id)
     const now = new Date().toISOString()
     db.prepare(
       'INSERT INTO club_invites (club_id, inviter_id, invitee_id, status, created_at) VALUES (?, ?, ?, ?, ?)',
@@ -286,16 +377,71 @@ export function start(opts = {}) {
     if (!row || row.user_id !== user.id) return res.status(404).json({ error: 'Invite not found.' })
     if (row.status !== 'pending') return res.json({ notification: getNotification(db, row.id) })
     const action = req.body?.action === 'accept' ? 'accepted' : 'declined'
+    let roomCode = null
     if (action === 'accepted' && row.kind === 'club_invite') {
       const fresh = getUserById(db, user.id)
       const payload = JSON.parse(row.payload)
-      if (fresh.club_id) return res.status(400).json({ error: 'Leave your current club first.' })
       const club = db.prepare('SELECT id FROM clubs WHERE id = ?').get(payload.clubId)
       if (!club) return res.status(400).json({ error: 'That club is gone.' })
-      db.prepare('UPDATE users SET club_id = ? WHERE id = ?').run(club.id, user.id)
+      if (membership(db, user.id, club.id)) return res.status(400).json({ error: 'You are already in that club.' })
+      addMembership(db, user.id, club.id, 'member')
+      if (!fresh.club_id) setActiveClub(db, user.id, club.id)
       db.prepare(
         'UPDATE club_invites SET status = ? WHERE club_id = ? AND invitee_id = ? AND status = ?',
       ).run('accepted', club.id, user.id, 'pending')
+    }
+    if (row.kind === 'club_challenge') {
+      const payload = JSON.parse(row.payload)
+      const challenge = db.prepare('SELECT * FROM challenges WHERE id = ?').get(payload.challengeId)
+      if (!challenge || challenge.status !== 'pending') {
+        return res.status(400).json({ error: 'That challenge is already settled.' })
+      }
+      const toClub = db.prepare('SELECT * FROM clubs WHERE id = ?').get(challenge.to_club_id)
+      const fromClub = db.prepare('SELECT * FROM clubs WHERE id = ?').get(challenge.from_club_id)
+      if (!toClub || toClub.owner_id !== user.id) {
+        return res.status(403).json({ error: 'Only that club’s owner can answer.' })
+      }
+      if (action === 'declined') {
+        db.prepare('UPDATE challenges SET status = ? WHERE id = ?').run('declined', challenge.id)
+        if (fromClub) {
+          const note = createNotification(db, {
+            userId: fromClub.owner_id,
+            kind: 'club_challenge_result',
+            body: `${toClub.name} declined the match.`,
+            payload: { challengeId: challenge.id, fromClub: fromClub.name, toClub: toClub.name },
+          })
+          hub.pushNote(fromClub.owner_id, note)
+        }
+      } else if (fromClub) {
+        const room = hub.openChallenge({
+          fromClub,
+          toClub,
+          ownerId: fromClub.owner_id,
+          mode: challenge.mode,
+          minutes: challenge.minutes,
+          goalies: challenge.goalies,
+        })
+        roomCode = room.code
+        db.prepare('UPDATE challenges SET status = ?, room_code = ? WHERE id = ?').run('accepted', room.code, challenge.id)
+        const members = db.prepare('SELECT user_id FROM memberships WHERE club_id = ? OR club_id = ?').all(fromClub.id, toClub.id)
+        const told = new Set()
+        for (const member of members) {
+          if (told.has(member.user_id)) continue
+          told.add(member.user_id)
+          const note = createNotification(db, {
+            userId: member.user_id,
+            kind: 'club_match',
+            body: `${fromClub.name} vs ${toClub.name} is on. Room ${room.code}.`,
+            payload: {
+              roomCode: room.code,
+              mode: challenge.mode,
+              minutes: challenge.minutes,
+              goalies: challenge.goalies,
+            },
+          })
+          hub.pushNote(member.user_id, note)
+        }
+      }
     }
     if (action === 'declined' && row.kind === 'club_invite') {
       const payload = JSON.parse(row.payload)
@@ -304,10 +450,12 @@ export function start(opts = {}) {
       ).run('declined', payload.clubId, user.id, 'pending')
     }
     setNotificationStatus(db, row.id, user.id, action)
+    const freshUser = getUserById(db, user.id)
     res.json({
       notification: getNotification(db, row.id),
-      user: publicUser(db, getUserById(db, user.id)),
-      club: getUserById(db, user.id).club_id ? clubSummary(db, getUserById(db, user.id).club_id) : null,
+      user: publicUser(db, freshUser),
+      club: freshUser.club_id ? clubSummary(db, freshUser.club_id) : null,
+      roomCode,
     })
   })
 

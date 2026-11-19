@@ -109,6 +109,8 @@ test('accounts, directory, clubs, invites, and a ranked 1v1', async () => {
     assert.deepEqual(matchNote.note.payload.others, [])
     sockB.send({ t: 'join', code: room.code })
     await sockB.waitFor((m) => m.t === 'room' && m.players.length === 2)
+    sockB.send({ t: 'ready' })
+    await sockA.waitFor((m) => m.t === 'room' && m.players.some((p) => p.id !== room.hostId && p.ready))
     sockA.send({ t: 'start' })
     const started = await sockA.waitFor((m) => m.t === 'start')
     assert.equal(started.snap.mode, '1v1')
