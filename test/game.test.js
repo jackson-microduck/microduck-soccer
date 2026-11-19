@@ -83,7 +83,7 @@ test('a ball over the crossbar is not a goal', () => {
   assert.equal(match.score.B, 0)
 })
 
-test('celebration lasts 8 seconds and the other team waits', () => {
+test('celebration lasts 5 seconds and the other team waits', () => {
   const match = duel()
   const ada = match.players[0]
   const bea = match.players[1]
@@ -102,11 +102,11 @@ test('celebration lasts 8 seconds and the other team waits', () => {
   const z = bea.z
   bea.cmd.mz = -1
   let elapsed = 0
-  while (match.phase === 'celebrate' && elapsed < 9) {
+  while (match.phase === 'celebrate' && elapsed < 6) {
     step(match, 1 / 30)
     elapsed += 1 / 30
   }
-  assert.ok(elapsed > 7.5 && elapsed < 8.4)
+  assert.ok(elapsed > 4.5 && elapsed < 5.4)
   assert.equal(match.phase, 'countdown')
   assert.ok(Math.abs(bea.z - z) < 0.08)
 })

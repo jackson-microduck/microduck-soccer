@@ -148,7 +148,7 @@ test('accounts, directory, clubs, invites, and a ranked 1v1', async () => {
     assert.equal(scored, true)
     const goalSnap = [...sockA.inbox].reverse().find((m) => m.t === 'snap' && m.phase === 'celebrate')
     assert.ok(goalSnap)
-    assert.ok(goalSnap.phaseT > 7)
+    assert.ok(goalSnap.phaseT > 4.5 && goalSnap.phaseT < 5.4)
     sockA.send({ t: 'hook-end' })
     const end = await sockA.waitFor((m) => m.t === 'end')
     assert.equal(end.ranked, true)

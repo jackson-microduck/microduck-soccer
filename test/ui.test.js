@@ -197,7 +197,9 @@ test('headless browser clicks signup, club logos, and a bot match', { timeout: 9
     await click('Play vs bots')
     await sleep(250)
     await click('Play vs bots')
-    await sleep(800)
+    await sleep(600)
+    await click('Phone controls')
+    await sleep(400)
     const phoneOn = await evalJs(`(() => {
       const picker = document.getElementById('scheme-picker')
       const stick = getComputedStyle(document.getElementById('stick')).display

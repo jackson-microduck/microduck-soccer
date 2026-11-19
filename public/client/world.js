@@ -1,6 +1,12 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { DRIBBLE, integrateMover } from '/shared/game.js'
+
+const SPIN_Q = new THREE.Quaternion()
+const BAKE_Q = new THREE.Quaternion()
+const AXIS_Z = new THREE.Vector3(0, 0, 1)
+const MATS = new Map()
 
 const OMIT = /pcb|bearing|banana|motor_support|speaker|elec_rpi/
 const ACCENT = /foot_|ankle_|sole_|bottom_head|jaw|soft_mouth/
@@ -27,8 +33,20 @@ function loadRig() {
 }
 
 function surface(color, rough, simple) {
-  if (simple) return new THREE.MeshLambertMaterial({ color })
-  return new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: 0.06 })
+  const key = `${simple ? 'L' : 'S'}|${rough}|${color}`
+  let mat = MATS.get(key)
+  if (mat) return mat
+  mat = simple
+    ? new THREE.MeshLambertMaterial({ color })
+    : new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: 0.06 })
+  MATS.set(key, mat)
+  return mat
+}
+
+function sameLayout(list) {
+  const names = Object.keys(list[0].attributes).sort().join(',')
+  const indexed = list[0].index != null
+  return list.every((geo) => (geo.index != null) === indexed && Object.keys(geo.attributes).sort().join(',') === names)
 }
 
 function colorFor(mesh, accent) {
@@ -156,16 +174,32 @@ function buildDuck(geoms, kin, accent, team, name, goalie, simple) {
     g.quaternion.copy(g.userData.base)
     groups.set(body.name, g)
     if (body.joint) joints.set(body.joint.name, g)
+    const buckets = new Map()
     for (const geom of body.geoms || []) {
       if (OMIT.test(geom.mesh)) continue
-      const geo = geoms.get(geom.mesh.replace(/\./g, '').toLowerCase())
-      if (!geo) continue
+      const src = geoms.get(geom.mesh.replace(/\./g, '').toLowerCase())
+      if (!src) continue
       const mat = surface(colorFor(geom.mesh, accent), 0.58, simple)
-      const mesh = new THREE.Mesh(geo, mat)
+      const baked = src.clone()
       const [gw, gx, gy, gz] = geom.quat
-      mesh.quaternion.set(gx, gy, gz, gw)
-      mesh.position.set(geom.pos[0], geom.pos[1], geom.pos[2])
-      g.add(mesh)
+      BAKE_Q.set(gx, gy, gz, gw)
+      baked.applyQuaternion(BAKE_Q)
+      baked.translate(geom.pos[0], geom.pos[1], geom.pos[2])
+      const list = buckets.get(mat)
+      if (list) list.push(baked)
+      else buckets.set(mat, [baked])
+    }
+    for (const [mat, list] of buckets) {
+      if (list.length === 1) {
+        g.add(new THREE.Mesh(list[0], mat))
+        continue
+      }
+      const merged = sameLayout(list) ? mergeGeometries(list, false) : null
+      if (!merged) {
+        for (const one of list) g.add(new THREE.Mesh(one, mat))
+      } else {
+        g.add(new THREE.Mesh(merged, mat))
+      }
     }
   }
   for (const body of kin.bodies) {
@@ -195,9 +229,8 @@ function buildDuck(geoms, kin, accent, team, name, goalie, simple) {
       const posed = pose(anim, time)
       for (const [name, group] of joints) {
         const angle = posed.joints[name] || 0
-        group.quaternion.copy(group.userData.base)
-        const spin = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), angle)
-        group.quaternion.multiply(spin)
+        SPIN_Q.setFromAxisAngle(AXIS_Z, angle)
+        group.quaternion.copy(group.userData.base).multiply(SPIN_Q)
       }
       tilt.rotation.x = posed.body.pitch
       tilt.rotation.z = posed.body.roll
@@ -446,6 +479,7 @@ export async function createWorld(canvas) {
   const shown = new Map()
   let ballShown = { x: 0.35, y: 0.078, z: 0.2 }
   let pred = null
+  let inputSource = null
   let aimYaw = 0
   let running = true
   let last = performance.now()
@@ -518,6 +552,13 @@ export async function createWorld(canvas) {
       }
       const me = snap.players.find((p) => p.id === meId)
       if (me && pred) {
+        if (inputSource && snap.phase === 'play') {
+          const stick = inputSource()
+          pred.cmd.mx = stick.mx
+          pred.cmd.mz = stick.mz
+          pred.cmd.sprint = !!stick.sprint
+          if (Number.isFinite(stick.sens)) pred.cmd.sens = stick.sens
+        }
         pred.team = me.team
         if (['idle', 'walk', 'sprint'].includes(me.anim) && snap.phase === 'play') {
           integrateMover(pred, dt, { phase: 'play', celebrateTeam: null, ball: { owner: snap.ball.owner } })
@@ -671,6 +712,7 @@ export async function createWorld(canvas) {
     setInput(input) {
       if (pred) pred.cmd = input
     },
+    setInputSource(fn) { inputSource = fn },
     celebrate(at) {
       for (let i = 0; i < 16; i++) {
         const m = new THREE.Mesh(

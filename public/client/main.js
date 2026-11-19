@@ -163,11 +163,6 @@ function onNet(msg) {
     }
     state.pendingStart = msg
     state.pickerFor = msg.snap?.id || state.pickerFor || ''
-    const saved = localStorage.getItem('md-scheme')
-    if (saved === 'laptop' || saved === 'phone') {
-      confirmScheme(saved)
-      return
-    }
     const overlay = document.getElementById('scheme-picker')
     if (overlay && !overlay.classList.contains('hidden')) return
     showSchemePicker()
@@ -1567,7 +1562,7 @@ function helpNode() {
     'Slide tackle: C. If you miss, you are stunned briefly and the move goes on cooldown.',
     'Dribble spin: P. During the spin, and for a moment after, nobody can take the ball. A slide into it misses and stuns. It has a cooldown.',
     'Goalie dive (3v3 only): G. Dive to catch a shot.',
-    'After a goal, the scoring side celebrates for 8 seconds: 1 spin, 2 quack, 3 head bob, 4 sit and stand, 5 roller glide.',
+    'After a goal, the scoring side celebrates for 5 seconds: 1 spin, 2 quack, 3 head bob, 4 sit and stand, 5 roller glide.',
   ]) {
     const li = document.createElement('li')
     li.textContent = line
@@ -1735,6 +1730,7 @@ async function boot() {
   stage.appendChild(canvas)
   try {
     world = await createWorld(canvas)
+    world.setInputSource(() => currentStick())
   } catch (err) {
     console.error(err)
   }

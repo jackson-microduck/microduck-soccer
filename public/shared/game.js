@@ -1,7 +1,7 @@
 // Shared match rules. The server is authoritative; the client uses the same
 // movement numbers so a local duck doesn't lag behind a tap.
 
-export const CELEBRATION_SECONDS = 8
+export const CELEBRATION_SECONDS = 5
 export const COUNTDOWN_SECONDS = 1.25
 export const STAMINA_MAX = 100
 export const STAMINA_DRAIN = 36
