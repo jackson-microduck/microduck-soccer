@@ -331,7 +331,7 @@ export function setInput(match, id, msg) {
   const power = Number(msg.power)
   if (Number.isFinite(power)) p.cmd.power = clamp(power, 0, 1)
   const sens = Number(msg.sens)
-  p.cmd.sens = Number.isFinite(sens) ? clamp(sens, 0.7, 1.3) : 1
+  p.cmd.sens = Number.isFinite(sens) ? clamp(sens, 0.4, 1.3) : 1
   if (Number.isFinite(msg.seq)) p.ack = msg.seq | 0
   for (const key of ['kick', 'pass', 'slide', 'spin', 'dive']) {
     const value = msg[key]
@@ -486,7 +486,7 @@ export function integrateMover(p, dt, match) {
     p.sprinting = false
     p.stamina = Math.min(STAMINA_MAX, p.stamina + STAMINA_REGEN * dt * 0.35)
   } else if (frozen || (mx === 0 && mz === 0)) {
-    const sens = clamp(p.cmd.sens || 1, 0.7, 1.3)
+    const sens = clamp(p.cmd.sens || 1, 0.4, 1.3)
     const stop = Math.min(1, 12 * sens * dt)
     p.vx += (0 - p.vx) * stop
     p.vz += (0 - p.vz) * stop
@@ -503,7 +503,7 @@ export function integrateMover(p, dt, match) {
       p.stamina = Math.min(STAMINA_MAX, p.stamina + STAMINA_REGEN * dt)
     }
     const speed = p.sprinting ? (ballOwned ? SPRINT_BALL : SPRINT) : WALK
-    const sens = clamp(p.cmd.sens || 1, 0.7, 1.3)
+    const sens = clamp(p.cmd.sens || 1, 0.4, 1.3)
     const targetYaw = Math.atan2(mx, mz)
     const turn = (ballOwned ? 16 : 12) * sens
     p.yaw = lerpAngle(p.yaw, targetYaw, 1 - Math.exp(-turn * dt))

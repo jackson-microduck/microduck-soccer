@@ -315,16 +315,17 @@ body.touch #touch { display: block; }
   position: absolute;
   left: max(16px, env(safe-area-inset-left));
   bottom: max(28px, env(safe-area-inset-bottom));
-  width: 116px; height: 116px;
+  width: min(168px, 46vw);
+  height: min(168px, 46vw);
   border-radius: 50%;
   background: rgba(255,253,251,.45);
   border: 2px solid rgba(255,255,255,.8);
   touch-action: none;
 }
 #knob {
-  width: 52px; height: 52px; border-radius: 50%;
+  width: 64px; height: 64px; border-radius: 50%;
   background: rgba(255,253,251,.95);
-  position: absolute; left: 32px; top: 32px;
+  position: absolute; left: calc(50% - 32px); top: calc(50% - 32px);
   box-shadow: 0 6px 16px rgba(0,0,0,.12);
 }
 #pad {

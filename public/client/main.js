@@ -152,7 +152,17 @@ function onNet(msg) {
     return
   }
   if (msg.t === 'start') {
+    const matchId = msg.snap?.id || ''
+    if (state.screen === 'match' && state.matchId === matchId) {
+      state.snap = msg.snap
+      world?.pushSnap(msg.snap, currentStick())
+      updateHud(msg.snap)
+      return
+    }
     state.pendingStart = msg
+    const overlay = document.getElementById('scheme-picker')
+    if (overlay && !overlay.classList.contains('hidden') && state.pickerFor === matchId) return
+    state.pickerFor = matchId
     showSchemePicker()
     return
   }
@@ -183,6 +193,7 @@ function onNet(msg) {
   }
   if (msg.t === 'end') {
     state.result = msg
+    state.matchId = null
     state.screen = 'results'
     hideMatch()
     refreshMe()
@@ -1014,7 +1025,7 @@ function lobbyCard() {
   sensLabel.textContent = `Sensitivity ${readSens().toFixed(2)} · saved on this device`
   const sens = document.createElement('input')
   sens.type = 'range'
-  sens.min = '0.7'
+  sens.min = '0.4'
   sens.max = '1.3'
   sens.step = '0.05'
   sens.value = String(readSens())
@@ -1411,7 +1422,9 @@ function currentStick() {
 
 function readSens() {
   const n = Number(localStorage.getItem('md-sensitivity'))
-  return Number.isFinite(n) ? Math.min(1.3, Math.max(0.7, n)) : 1
+  const phone = state.scheme === 'phone' || (state.scheme !== 'laptop' && detectedScheme() === 'phone')
+  const fallback = phone ? 0.5 : 1
+  return Number.isFinite(n) ? Math.min(1.3, Math.max(0.4, n)) : fallback
 }
 
 function detectedScheme() {
@@ -1450,27 +1463,39 @@ function showSchemePicker() {
     b.type = 'button'
     b.className = `minute${pick.value === id ? ' on' : ''}`
     b.textContent = label
-    b.addEventListener('click', () => {
-      pick.value = id
-      for (const other of buttons) other.classList.toggle('on', other === b)
+    b.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      confirmScheme(id)
     })
     buttons.push(b)
     row.append(b)
   }
-  card.append(row, button('Play', 'primary', () => {
-    applyScheme(pick.value)
-    overlay.classList.add('hidden')
-    const msg = state.pendingStart
-    state.pendingStart = null
-    if (msg) enterMatch(msg)
+  card.append(row, button('Play', 'primary', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    confirmScheme(pick.value)
   }))
   overlay.replaceChildren(card)
   overlay.classList.remove('hidden')
 }
 
+function confirmScheme(scheme) {
+  if (state.schemeLock) return
+  state.schemeLock = true
+  applyScheme(scheme)
+  const overlay = document.getElementById('scheme-picker')
+  if (overlay) overlay.classList.add('hidden')
+  const msg = state.pendingStart
+  state.pendingStart = null
+  if (msg && state.screen !== 'match') enterMatch(msg)
+  state.schemeLock = false
+}
+
 function enterMatch(msg) {
   state.you = msg.you
   state.snap = msg.snap
+  state.matchId = msg.snap?.id || state.pickerFor || ''
   state.result = null
   state.screen = 'match'
   showMatch()
@@ -1604,11 +1629,19 @@ function setupInput() {
     if (e.cancelable) e.preventDefault()
     moveJoy(e)
   }
+  const placeKnob = (nx, ny, feel) => {
+    const width = stick.getBoundingClientRect().width || stick.offsetWidth || 168
+    const max = width / 2
+    const knobSize = knob.offsetWidth || 64
+    const knobR = knobSize / 2
+    const reach = Math.max(0, max - knobR - 6) * feel
+    knob.style.left = `${max - knobR + nx * reach}px`
+    knob.style.top = `${max - knobR + ny * reach}px`
+  }
   const end = () => {
     if (!joy.active) return
     joy = { x: 0, y: 0, active: false }
-    knob.style.left = '32px'
-    knob.style.top = '32px'
+    placeKnob(0, 0, 0)
     flushInput()
   }
   stick.addEventListener('pointerdown', beginJoy, { passive: false })
@@ -1627,28 +1660,28 @@ function setupInput() {
     const dy = point.clientY - (rect.top + rect.height / 2)
     const max = rect.width / 2
     const mag = Math.hypot(dx, dy)
-    const dead = max * 0.16
+    const phone = state.scheme === 'phone'
+    const dead = max * (phone ? 0.3 : 0.16)
     if (mag <= dead) {
       joy.x = 0
       joy.y = 0
-      knob.style.left = '32px'
-      knob.style.top = '32px'
+      placeKnob(0, 0, 0)
       return
     }
     const nx = dx / mag
     const ny = dy / mag
     const strength = Math.min(1, (mag - dead) / (max - dead))
-    const feel = Math.pow(strength, 1.15 / readSens())
+    const sens = readSens()
+    const feel = phone ? strength * strength * sens : Math.pow(strength, 1.15 / sens)
     joy.x = nx * feel
     joy.y = ny * feel
-    const reach = (max - 26) * feel
-    knob.style.left = `${32 + nx * reach}px`
-    knob.style.top = `${32 + ny * reach}px`
+    placeKnob(nx, ny, feel)
   }
   document.getElementById('help-btn').addEventListener('click', () => openHelp(null))
   document.getElementById('leave-btn').addEventListener('click', () => {
     send({ t: 'leave' })
     hideMatch()
+    state.matchId = null
     state.screen = 'home'
     render()
   })

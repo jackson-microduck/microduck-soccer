@@ -154,8 +154,24 @@ test('headless browser clicks signup, club logos, and a bot match', { timeout: 9
     await click('Play vs bots')
     await sleep(400)
     await click('Phone controls')
-    await click('Play')
-    await sleep(250)
+    await sleep(300)
+    const started = await evalJs(`(() => {
+      const picker = document.getElementById('scheme-picker')
+      return {
+        pickerHidden: !picker || picker.classList.contains('hidden'),
+        playing: document.body.classList.contains('playing'),
+        matchOn: !document.getElementById('match').classList.contains('hidden'),
+      }
+    })()`)
+    assert.equal(started.pickerHidden, true, JSON.stringify(started))
+    assert.equal(started.playing, true, JSON.stringify(started))
+    assert.equal(started.matchOn, true, JSON.stringify(started))
+    await sleep(400)
+    const stayed = await evalJs(`(() => {
+      const picker = document.getElementById('scheme-picker')
+      return !picker || picker.classList.contains('hidden')
+    })()`)
+    assert.equal(stayed, true)
     const hud = await evalJs(`JSON.stringify({line:document.getElementById('club-line')?.textContent||'',clock:document.getElementById('clock')?.textContent||'',banner:document.getElementById('banner')?.innerText||'',pad:[...document.querySelectorAll('#pad button')].map(b=>b.textContent).join(','),touch:document.body.className})`)
     assert.match(hud, /Bots · Hard/)
     assert.match(hud, /5:0|4:5/)
@@ -184,7 +200,8 @@ test('headless browser clicks signup, club logos, and a bot match', { timeout: 9
     assert.equal(joy.touch, true, JSON.stringify(joy))
     assert.equal(joy.shown, 'block', JSON.stringify(joy))
     assert.equal(joy.hit, true, JSON.stringify(joy))
-    assert.ok(joy.top < 30, JSON.stringify(joy))
+    assert.ok(joy.top < 70, JSON.stringify(joy))
+    assert.ok(joy.top > 12, JSON.stringify(joy))
     await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'ShiftLeft', key: 'Shift', windowsVirtualKeyCode: 16 })
     await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'KeyW', key: 'w', windowsVirtualKeyCode: 87 })
     await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'KeyK', key: 'k', windowsVirtualKeyCode: 75 })
