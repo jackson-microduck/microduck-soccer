@@ -283,3 +283,25 @@ test('a ranked 1v1 records the goal, win, loss, and rating, and a 2v2 records th
     await app.close()
   }
 })
+
+test('one player in quick match is filled with bots after the short wait', async () => {
+  const app = await start({ port: 0, dbPath: ':memory:' })
+  try {
+    const ada = client(app.port)
+    assert.equal((await ada.call('POST', '/api/signup', { username: 'Ada', password: 'secret' })).status, 200)
+    const sock = await openSocket(app.port, ada.jar.cookie)
+    await sock.waitFor((m) => m.t === 'ready')
+    sock.send({ t: 'quick', mode: '2v2', minutes: 3, goalies: true })
+    const queued = await sock.waitFor((m) => m.t === 'queue')
+    assert.equal(queued.count, 1)
+    assert.equal(queued.need, 4)
+    const started = await sock.waitFor((m) => m.t === 'start', 10000)
+    assert.equal(started.snap.mode, '2v2')
+    assert.equal(started.snap.ranked, false)
+    assert.equal(started.snap.players.length, 4)
+    assert.equal(started.snap.players.filter((p) => p.bot).length, 3)
+    sock.ws.close()
+  } finally {
+    await app.close()
+  }
+})

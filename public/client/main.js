@@ -446,7 +446,7 @@ function homeCard() {
   const slot = document.createElement('div')
   slot.id = 'hero-slot'
   const actions = document.createElement('div')
-  actions.className = 'actions'
+  actions.className = 'actions home-actions'
   actions.append(
     button('Quick Match', 'primary big', () => {
       state.screen = 'lobby'
@@ -1472,6 +1472,7 @@ function showMatch() {
   buildPad()
   buildQuickChat()
   maybeTips()
+  document.getElementById('orient')?.classList.remove('hidden')
   syncOrient()
   if (state.scheme === 'phone') screen.orientation?.lock?.('landscape')?.catch(() => {})
   world.resize()
@@ -1487,7 +1488,7 @@ function hideMatch() {
 }
 
 function syncOrient() {
-  document.body.classList.toggle('portrait', matchMedia('(orientation: portrait)').matches)
+  document.body.classList.toggle('portrait', window.innerWidth <= window.innerHeight)
 }
 
 function pushMatchChat(name, text) {
@@ -1502,6 +1503,17 @@ function pushMatchChat(name, text) {
 }
 
 function buildQuickChat() {
+  let toggle = document.getElementById('chat-toggle')
+  if (!toggle) {
+    toggle = document.createElement('button')
+    toggle.id = 'chat-toggle'
+    toggle.type = 'button'
+    toggle.textContent = 'Chat'
+    toggle.addEventListener('click', () => {
+      document.getElementById('quick-chat')?.classList.toggle('open')
+    })
+    matchEl.append(toggle)
+  }
   let row = document.getElementById('quick-chat')
   if (!row) {
     row = document.createElement('div')
@@ -1626,31 +1638,29 @@ function paintPower() {
 function buildPad() {
   const snap = state.snap
   const me = snap?.players?.find((p) => p.id === String(state.me?.id))
-  const celebrate = snap?.phase === 'celebrate' && me && me.team === snap.celebrateTeam
-  const waiting = snap?.phase === 'celebrate' && me && me.team !== snap.celebrateTeam
+  const scoring = snap?.phase === 'celebrate' && me && me.team === snap.celebrateTeam
+  const frozen = !!(snap && snap.phase !== 'play')
   const charging = goalieCharging()
   const hasBall = snap?.ball?.owner === String(state.me?.id)
   const phone = state.scheme === 'phone'
-  const buttons = celebrate
-    ? [['spin', 'Spin'], ['quack', 'Quack'], ['bob', 'Bob'], ['sit', 'Sit'], ['glide', 'Glide']]
-    : waiting
-      ? []
-      : phone
-        ? [
-            ['sprint', 'Sprint', true],
-            charging ? ['stop', 'Stop'] : hasBall ? ['kick', 'Shoot'] : ['slide', 'Tackle'],
-            ['spin', 'Spin'],
-            ...(me?.goalie && !hasBall ? [['dive', 'Dive']] : []),
-          ]
-        : [
-            ['sprint', 'Sprint', true],
-            ['spin', 'Spin'],
-            charging ? ['stop', 'Stop'] : ['kick', 'Kick'],
-            ['slide', 'Slide'],
-            ['pass', 'Pass'],
-            ...(me?.goalie ? [['dive', 'Dive']] : []),
-          ]
-  const signature = JSON.stringify(buttons.map((b) => b[0]))
+  const buttons = phone
+    ? [
+        ['sprint', 'Sprint', true],
+        charging ? ['stop', 'Stop'] : hasBall ? ['kick', 'Shoot'] : ['slide', 'Tackle'],
+        ['spin', 'Spin'],
+        ...(me?.goalie && !hasBall ? [['dive', 'Dive']] : []),
+        ...(scoring ? [['quack', 'Quack'], ['bob', 'Bob'], ['sit', 'Sit'], ['glide', 'Glide']] : []),
+      ]
+    : [
+        ['sprint', 'Sprint', true],
+        ['spin', 'Spin'],
+        charging ? ['stop', 'Stop'] : ['kick', 'Kick'],
+        ['slide', 'Slide'],
+        ['pass', 'Pass'],
+        ...(me?.goalie ? [['dive', 'Dive']] : []),
+        ...(scoring ? [['quack', 'Quack'], ['bob', 'Bob'], ['sit', 'Sit'], ['glide', 'Glide']] : []),
+      ]
+  const signature = JSON.stringify([frozen, scoring, buttons.map((b) => b[0])])
   if (pad.dataset.sig === signature) return
   pad.dataset.sig = signature
   pad.replaceChildren()
@@ -1660,6 +1670,8 @@ function buildPad() {
     button.textContent = label
     if (wide) button.classList.add('wide')
     button.dataset.act = id
+    const celebrateAct = scoring && ['spin', 'quack', 'bob', 'sit', 'glide'].includes(id)
+    button.disabled = frozen && !celebrateAct
     if (id === 'sprint') {
       const down = (e) => { e.preventDefault(); input.sprint = true; button.classList.add('held') }
       const up = () => { input.sprint = false; button.classList.remove('held') }
@@ -1675,7 +1687,7 @@ function buildPad() {
     } else {
       button.addEventListener('pointerdown', (e) => {
         e.preventDefault()
-        if (celebrate) {
+        if (scoring) {
           input.emote += 1
           input.emoteName = id
           if (id === 'quack') playQuack()
@@ -1841,7 +1853,7 @@ function helpNode() {
     'With the ball, left click shoots and right click spins the dribble. Without the ball, left click slide tackles and holding right click spins you in place.',
     'Sprint: hold Shift. The stamina bar drains, then refills when you let go. Sprinting with the ball is slower than sprinting without it.',
     'Kick: K or Space. Pass: J. When you are the goalie and you have the ball, the power bar slides. Press Enter to lock it and shoot.',
-    'Slide tackle: C. If you miss, you are stunned briefly and the move goes on cooldown.',
+    'Slide tackle: C or E. If you miss, you are stunned briefly and the move goes on cooldown.',
     'Dribble spin: P. During the spin, and for a moment after, nobody can take the ball. A slide into it misses and stuns. It has a cooldown.',
     'Goalie dive (3v3 only): G. Dive to catch a shot.',
     'After a goal, the scoring side celebrates for 5 seconds: 1 spin, 2 quack, 3 head bob, 4 sit and stand, 5 roller glide.',
@@ -1896,7 +1908,7 @@ function setupInput() {
     if ((e.code === 'KeyK' || e.code === 'Space') && goalieCharging()) lockPowerKick()
     else if (e.code === 'KeyK' || e.code === 'Space') { input.kick += 1; playKick() }
     if (e.code === 'KeyJ') input.pass += 1
-    if (e.code === 'KeyC') input.slide += 1
+    if (e.code === 'KeyC' || e.code === 'KeyE') input.slide += 1
     if (e.code === 'KeyP') input.spin += 1
     if (e.code === 'KeyG') input.dive += 1
     const emotes = { Digit1: 'spin', Digit2: 'quack', Digit3: 'bob', Digit4: 'sit', Digit5: 'glide' }
@@ -1983,7 +1995,7 @@ function setupInput() {
   matchEl.addEventListener('mousemove', (e) => {
     if (state.screen !== 'match' || state.scheme === 'phone') return
     if (!e.movementX) return
-    world?.addAim(e.movementX * 0.0035)
+    world?.addAim(-e.movementX * 0.0035)
   })
   matchEl.addEventListener('contextmenu', (e) => {
     if (state.screen === 'match') e.preventDefault()
@@ -2013,7 +2025,14 @@ function setupInput() {
     stick.style.left = `${t.clientX - 70}px`
     stick.style.top = `${t.clientY - 70}px`
   }, { passive: true })
-  window.addEventListener('orientationchange', syncOrient)
+  window.addEventListener('resize', syncOrient)
+  window.addEventListener('orientationchange', () => {
+    syncOrient()
+    setTimeout(syncOrient, 250)
+  })
+  document.getElementById('orient-x')?.addEventListener('click', () => {
+    document.getElementById('orient')?.classList.add('hidden')
+  })
   document.getElementById('help-btn').addEventListener('click', () => openHelp(null))
   document.getElementById('leave-btn').addEventListener('click', () => {
     send({ t: 'leave' })

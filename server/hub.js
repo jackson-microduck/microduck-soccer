@@ -259,7 +259,8 @@ export function createHub(db) {
       if (!key.endsWith(':q') || !list.length) continue
       const [mode, minutes, goalies] = key.split(':')
       const need = MODES[mode]?.players || 0
-      const waited = Date.now() - (list[0].queueAt || Date.now())
+      if (!list[0].queueAt) list[0].queueAt = Date.now()
+      const waited = Date.now() - list[0].queueAt
       if (list.length < need && waited < 8000) continue
       const taken = list.splice(0, Math.min(need, list.length))
       for (const c of taken) c.queue = null
@@ -680,6 +681,7 @@ export function createHub(db) {
       ws,
       user,
       queue: prev?.queue || null,
+      queueAt: prev?.queueAt || null,
       roomCode: prev?.roomCode || null,
       matchId: prev?.matchId || null,
       wantGoalie: !!prev?.wantGoalie,
