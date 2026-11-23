@@ -36,9 +36,19 @@ export function cleanColor(value) {
 }
 
 export function cleanUsername(value) {
-  const name = String(value || '').trim()
-  if (!/^[A-Za-z0-9_]{3,16}$/.test(name)) return null
+  const name = String(value || '').trim().replace(/\s+/g, ' ')
+  if (name.length < 3 || name.length > 16) return null
+  if (!/^[A-Za-z0-9_]+(?: [A-Za-z0-9_]+)*$/.test(name)) return null
   return name
+}
+
+const BANNED = ['fuck', 'shit', 'bitch', 'asshole', 'cunt', 'nigger', 'faggot', 'dick']
+
+export function cleanChat(value) {
+  let text = String(value || '').replace(/\s+/g, ' ').trim().slice(0, 80)
+  if (!text) return ''
+  for (const word of BANNED) text = text.replace(new RegExp(word, 'ig'), '***')
+  return text
 }
 
 // Returns the canonical data URL string, null to clear, or false when the

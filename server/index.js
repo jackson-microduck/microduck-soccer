@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url'
 import { WebSocketServer } from 'ws'
 import {
   cleanColor,
+  cleanChat,
   cleanUsername,
   hashPassword,
   randomCode,
@@ -13,19 +14,26 @@ import {
   verifyPassword,
 } from './auth.js'
 import {
+  acceptFriend,
   addMembership,
+  addReport,
   clubSummary,
   createNotification,
   getNotification,
   getUserById,
   getUserByName,
   leaderboards,
+  listFriends,
   listNotifications,
+  listReports,
   membership,
   myClubs,
   openDatabase,
   ownedCount,
   publicUser,
+  recentNames,
+  removeFriend,
+  requestFriend,
   searchUsers,
   setActiveClub,
   setNotificationStatus,
@@ -113,7 +121,7 @@ export function start(opts = {}) {
     if (limited(`up:${ip}`, 20, 60_000)) return res.status(429).json({ error: 'Too many signups. Wait a minute.' })
     const username = cleanUsername(req.body?.username)
     const password = String(req.body?.password || '')
-    if (!username) return res.status(400).json({ error: 'Usernames are 3–16 letters, numbers, or underscores.' })
+    if (!username) return res.status(400).json({ error: 'Usernames are 3–16 characters. Letters, numbers, underscores, and single spaces are ok.' })
     if (password.length < 4 || password.length > 72) {
       return res.status(400).json({ error: 'Use a password between 4 and 72 characters.' })
     }
@@ -443,6 +451,12 @@ export function start(opts = {}) {
         }
       }
     }
+    if (row.kind === 'friend_request') {
+      const payload = JSON.parse(row.payload)
+      if (action === 'accepted') {
+        if (!acceptFriend(db, user.id, payload.fromId)) return res.status(400).json({ error: 'That friend request is gone.' })
+      } else removeFriend(db, payload.fromId, user.id)
+    }
     if (action === 'declined' && row.kind === 'club_invite') {
       const payload = JSON.parse(row.payload)
       db.prepare(
@@ -457,6 +471,80 @@ export function start(opts = {}) {
       club: freshUser.club_id ? clubSummary(db, freshUser.club_id) : null,
       roomCode,
     })
+  })
+
+  app.get('/api/friends', (req, res) => {
+    const user = requireUser(req, res)
+    if (!user) return
+    const friends = listFriends(db, user.id).map((friend) => ({
+      ...friend,
+      online: hub.online.has(friend.id),
+    }))
+    res.json({ friends })
+  })
+
+  app.post('/api/friends', (req, res) => {
+    const user = requireUser(req, res)
+    if (!user) return
+    const name = cleanUsername(req.body?.username)
+    const target = name ? getUserByName(db, name) : null
+    if (!target || target.is_bot) return res.status(404).json({ error: 'No player with that username.' })
+    if (target.id === user.id) return res.status(400).json({ error: 'That is you.' })
+    const status = requestFriend(db, user.id, target.id)
+    if (status === 'accepted') return res.status(400).json({ error: 'You are already friends.' })
+    if (status === 'pending') return res.status(400).json({ error: 'That request is already waiting.' })
+    if (status === 'new') {
+      const note = createNotification(db, {
+        userId: target.id,
+        kind: 'friend_request',
+        body: `${user.username} wants to be friends`,
+        payload: { fromId: user.id, from: user.username },
+      })
+      hub.pushNote(target.id, note)
+    }
+    res.json({ ok: true })
+  })
+
+  app.post('/api/friends/remove', (req, res) => {
+    const user = requireUser(req, res)
+    if (!user) return
+    const id = routeId(req.body?.id)
+    if (!id) return res.status(400).json({ error: 'Pick a friend.' })
+    removeFriend(db, user.id, id)
+    res.json({ ok: true })
+  })
+
+  app.get('/api/reports/names', (req, res) => {
+    const user = requireUser(req, res)
+    if (!user) return
+    res.json({ names: recentNames(db, user.id) })
+  })
+
+  app.post('/api/reports', (req, res) => {
+    const user = requireUser(req, res)
+    if (!user) return
+    const kind = req.body?.kind === 'map' ? 'map' : 'player'
+    const body = cleanChat(req.body?.body || req.body?.reason || '')
+    if (body.length < 3) return res.status(400).json({ error: 'Write a short note, at least 3 characters.' })
+    const targetName = kind === 'player' ? cleanUsername(req.body?.targetName) : ''
+    if (kind === 'player' && !targetName) return res.status(400).json({ error: 'Pick a player from a recent match.' })
+    addReport(db, {
+      reporterId: user.id,
+      kind,
+      targetName: targetName || '',
+      reason: String(req.body?.reason || '').slice(0, 40),
+      body,
+    })
+    res.json({ ok: true })
+  })
+
+  app.get('/api/admin/reports', (req, res) => {
+    const user = requireUser(req, res)
+    if (!user) return
+    const token = process.env.ADMIN_TOKEN || ''
+    const allowed = user.username.toLowerCase() === 'admin' || (token && req.get('x-admin-token') === token)
+    if (!allowed) return res.status(403).json({ error: 'Admin only.' })
+    res.json({ reports: listReports(db) })
   })
 
   app.use('/vendor/three', express.static(path.join(root, 'node_modules/three')))

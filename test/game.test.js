@@ -109,6 +109,23 @@ test('celebration lasts 5 seconds and the other team waits', () => {
   assert.ok(elapsed > 4.5 && elapsed < 5.4)
   assert.equal(match.phase, 'countdown')
   assert.ok(Math.abs(bea.z - z) < 0.08)
+  const ax = ada.x
+  const az = ada.z
+  const bx = bea.x
+  const bz = bea.z
+  ada.cmd.mx = 1
+  ada.cmd.mz = 1
+  bea.cmd.mx = -1
+  bea.cmd.mz = 1
+  step(match, 1 / 30)
+  assert.equal(match.phase, 'countdown')
+  assert.equal(ada.x, ax)
+  assert.equal(ada.z, az)
+  assert.equal(bea.x, bx)
+  assert.equal(bea.z, bz)
+  const kicker = match.players.find((p) => p.id === match.ball.owner)
+  assert.equal(kicker.team, 'B')
+  assert.ok(Math.hypot(match.ball.x - kicker.x, match.ball.z - kicker.z) < 0.25)
 })
 
 test('slide tackle steals, a miss stuns, and a timed spin makes the tackle miss', () => {

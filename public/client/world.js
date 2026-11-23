@@ -272,16 +272,16 @@ function roundRect(g, x, y, w, h, r) {
   g.closePath()
 }
 
-function woodTexture() {
+function grassTexture() {
   const canvas = document.createElement('canvas')
   canvas.width = 128
-  canvas.height = 256
+  canvas.height = 128
   const g = canvas.getContext('2d')
-  g.fillStyle = '#efd0a4'
-  g.fillRect(0, 0, 128, 256)
-  for (let i = 0; i < 8; i++) {
-    g.fillStyle = i % 2 ? 'rgba(176,122,62,0.08)' : 'rgba(255,255,255,0.08)'
-    g.fillRect(0, i * 32, 128, 32)
+  g.fillStyle = '#3c9a45'
+  g.fillRect(0, 0, 128, 128)
+  for (let y = 0; y < 8; y++) {
+    g.fillStyle = y % 2 ? '#348a3d' : '#46a84f'
+    g.fillRect(0, y * 16, 128, 16)
   }
   const tex = new THREE.CanvasTexture(canvas)
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping
@@ -294,12 +294,17 @@ function ballTexture() {
   canvas.width = 128
   canvas.height = 128
   const g = canvas.getContext('2d')
-  g.fillStyle = '#fff'
+  g.fillStyle = '#f7f7f7'
   g.fillRect(0, 0, 128, 128)
-  g.fillStyle = '#ff6a1a'
-  for (const [x, y] of [[36, 40], [92, 34], [28, 92], [86, 96], [64, 64]]) {
+  g.fillStyle = '#1a1a1a'
+  for (const [x, y] of [[64, 28], [28, 64], [100, 64], [46, 100], [82, 100]]) {
     g.beginPath()
-    g.arc(x, y, 15, 0, Math.PI * 2)
+    g.moveTo(x, y - 12)
+    g.lineTo(x + 11, y - 4)
+    g.lineTo(x + 7, y + 10)
+    g.lineTo(x - 7, y + 10)
+    g.lineTo(x - 11, y - 4)
+    g.closePath()
     g.fill()
   }
   const tex = new THREE.CanvasTexture(canvas)
@@ -309,7 +314,7 @@ function ballTexture() {
 
 function buildField(length, width, goalW, goalH, simple) {
   const group = new THREE.Group()
-  const tex = woodTexture()
+  const tex = grassTexture()
   tex.repeat.set(width / 0.9, length / 0.9)
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(width, length),
@@ -350,11 +355,18 @@ function buildField(length, width, goalW, goalH, simple) {
     m.position.set(x, y, z)
     group.add(m)
   }
-  addWall(width + thick * 2, wallH, thick, 0, wallH / 2, -hl - thick / 2)
-  addWall(width + thick * 2, wallH, thick, 0, wallH / 2, hl + thick / 2)
   addWall(thick, wallH, length, -hw - thick / 2, wallH / 2, 0)
   addWall(thick, wallH, length, hw + thick / 2, wallH / 2, 0)
-  for (const sign of [-1, 1]) group.add(buildGoal(sign * (hl + 0.02), goalW, goalH, sign, simple))
+  const gap = goalW + 0.06
+  const span = (width + thick * 2 - gap) / 2
+  for (const sign of [-1, 1]) {
+    const zWall = sign * (hl + thick / 2)
+    addWall(span, wallH, thick, -(width / 2) + span / 2, wallH / 2, zWall)
+    addWall(span, wallH, thick, width / 2 - span / 2, wallH / 2, zWall)
+    const lintel = wallH - goalH
+    if (lintel > 0.02) addWall(gap, lintel, thick, 0, goalH + lintel / 2, zWall)
+    group.add(buildGoal(sign * hl, goalW, goalH, sign, simple))
+  }
   return group
 }
 
@@ -370,26 +382,20 @@ function buildGoal(z, goalW, goalH, sign, simple) {
   const bar = new THREE.Mesh(new THREE.BoxGeometry(goalW + 0.03, 0.03, 0.03), white)
   bar.position.set(0, goalH, z)
   g.add(bar)
-  const depth = 0.32
+  const depth = 0.34
   const backZ = z + sign * depth
-  const back = new THREE.Mesh(
-    new THREE.PlaneGeometry(goalW, goalH),
-    new THREE.MeshStandardMaterial({
-      color: '#ffffff',
-      transparent: true,
-      opacity: 0.28,
-      side: THREE.DoubleSide,
-    }),
-  )
+  const solid = surface('#e8eef5', 0.55, simple)
+  const back = new THREE.Mesh(new THREE.BoxGeometry(goalW, goalH, 0.03), solid)
   back.position.set(0, goalH / 2, backZ)
   g.add(back)
-  const sideMat = new THREE.MeshStandardMaterial({ color: '#ffffff', transparent: true, opacity: 0.2, side: THREE.DoubleSide })
   for (const x of [-goalW / 2, goalW / 2]) {
-    const side = new THREE.Mesh(new THREE.PlaneGeometry(depth, goalH), sideMat)
+    const side = new THREE.Mesh(new THREE.BoxGeometry(0.03, goalH, depth), solid)
     side.position.set(x, goalH / 2, z + sign * depth / 2)
-    side.rotation.y = Math.PI / 2
     g.add(side)
   }
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(goalW, 0.03, depth), solid)
+  roof.position.set(0, goalH, z + sign * depth / 2)
+  g.add(roof)
   return g
 }
 
@@ -402,6 +408,14 @@ export function graphicsIsLow() {
   return coarse && small
 }
 
+function phoneScreen() {
+  return matchMedia('(pointer: coarse)').matches && Math.min(window.innerWidth || 1200, window.innerHeight || 800) < 900
+}
+
+function pixelCap(low) {
+  return low || phoneScreen() ? 1 : Math.min(window.devicePixelRatio || 1, 2)
+}
+
 function makeRenderer(canvas, low) {
   const renderer = new THREE.WebGLRenderer({
     canvas,
@@ -409,7 +423,7 @@ function makeRenderer(canvas, low) {
     alpha: true,
     powerPreference: low ? 'low-power' : 'high-performance',
   })
-  renderer.setPixelRatio(low ? 1 : Math.min(window.devicePixelRatio || 1, 2))
+  renderer.setPixelRatio(pixelCap(low))
   renderer.outputColorSpace = THREE.SRGBColorSpace
   return renderer
 }
@@ -473,6 +487,9 @@ export async function createWorld(canvas) {
   let meId = null
   let orbit = 0
   let camYaw = 0
+  let aimHold = 0
+  const trails = new Map()
+  let ballTrail = null
   let dragging = false
   let lastX = 0
   let demoT = 0
@@ -558,9 +575,18 @@ export async function createWorld(canvas) {
           pred.cmd.mz = stick.mz
           pred.cmd.sprint = !!stick.sprint
           if (Number.isFinite(stick.sens)) pred.cmd.sens = stick.sens
+          if (stick.spinHold && snap.ball.owner !== meId) pred.yaw += dt * 7
         }
         pred.team = me.team
-        if (['idle', 'walk', 'sprint'].includes(me.anim) && snap.phase === 'play') {
+        if (snap.phase === 'countdown' || snap.phase === 'fulltime') {
+          pred.x = me.x
+          pred.z = me.z
+          pred.yaw = me.yaw
+          pred.vx = 0
+          pred.vz = 0
+          pred.cmd.mx = 0
+          pred.cmd.mz = 0
+        } else if (['idle', 'walk', 'sprint'].includes(me.anim) && snap.phase === 'play') {
           integrateMover(pred, dt, { phase: 'play', celebrateTeam: null, ball: { owner: snap.ball.owner } })
         } else {
           pred.x = me.x
@@ -583,10 +609,22 @@ export async function createWorld(canvas) {
           view.x = p.x
           view.z = p.z
           view.yaw = p.yaw
+        } else if (snap.phase === 'countdown' || snap.phase === 'fulltime') {
+          view.x = p.x
+          view.z = p.z
+          view.yaw = p.yaw
         } else {
-          view.x = damp(view.x, p.x, 18, dt)
-          view.z = damp(view.z, p.z, 18, dt)
-          view.yaw = dampAngle(view.yaw, p.yaw, 16, dt)
+          const tr = trails.get(p.id)
+          if (tr && tr.bt > tr.at) {
+            const u = Math.min(1, Math.max(0, (now - 50 - tr.at) / (tr.bt - tr.at)))
+            view.x = tr.ax + (tr.bx - tr.ax) * u
+            view.z = tr.az + (tr.bz - tr.az) * u
+            view.yaw = dampAngle(tr.ay, tr.by, 8, u)
+          } else {
+            view.x = damp(view.x, p.x, 18, dt)
+            view.z = damp(view.z, p.z, 18, dt)
+            view.yaw = dampAngle(view.yaw, p.yaw, 16, dt)
+          }
         }
         duck.root.position.set(view.x, 0, view.z)
         duck.apply(p.anim || 'idle', p.animT || demoT, view.yaw)
@@ -602,6 +640,15 @@ export async function createWorld(canvas) {
         ballShown.x = bx
         ballShown.y = by
         ballShown.z = bz
+      } else if ((snap.phase === 'countdown' || snap.phase === 'fulltime') || !ballTrail) {
+        ballShown.x = bx
+        ballShown.y = by
+        ballShown.z = bz
+      } else if (ballTrail.bt > ballTrail.at) {
+        const u = Math.min(1, Math.max(0, (now - 50 - ballTrail.at) / (ballTrail.bt - ballTrail.at)))
+        ballShown.x = ballTrail.ax + (ballTrail.bx - ballTrail.ax) * u
+        ballShown.y = ballTrail.ay + (ballTrail.by - ballTrail.ay) * u
+        ballShown.z = ballTrail.az + (ballTrail.bz - ballTrail.az) * u
       } else {
         ballShown.x = damp(ballShown.x, bx, 22, dt)
         ballShown.y = damp(ballShown.y, by, 22, dt)
@@ -612,7 +659,7 @@ export async function createWorld(canvas) {
       const follow = me ? shown.get(me.id) : null
       const face = follow ? follow.yaw : camYaw
       const moving = pred && Math.hypot(pred.cmd.mx || 0, pred.cmd.mz || 0) > 0.05
-      if (!moving) camYaw = dampAngle(camYaw, face + orbit, 12, dt)
+      if (!moving && performance.now() - aimHold > 600) camYaw = dampAngle(camYaw, face, 10, dt)
       aimYaw = camYaw
       const dist = 1.35
       const focus = follow || { x: snap.ball.x, z: snap.ball.z }
@@ -634,7 +681,7 @@ export async function createWorld(canvas) {
   }
 
   canvas.addEventListener('pointerdown', (e) => {
-    if (e.target !== canvas) return
+    if (e.target !== canvas || mode === 'match') return
     dragging = true
     lastX = e.clientX
   })
@@ -671,6 +718,19 @@ export async function createWorld(canvas) {
     },
     pushSnap(next, input) {
       snap = next
+      const nowT = performance.now()
+      for (const p of next.players) {
+        if (String(p.id) === meId) continue
+        const prev = trails.get(p.id)
+        trails.set(p.id, prev
+          ? { ax: prev.bx, az: prev.bz, ay: prev.by, at: prev.bt, bx: p.x, bz: p.z, by: p.yaw, bt: nowT }
+          : { ax: p.x, az: p.z, ay: p.yaw, at: nowT, bx: p.x, bz: p.z, by: p.yaw, bt: nowT })
+      }
+      if (next.ball) {
+        ballTrail = ballTrail
+          ? { ax: ballTrail.bx, ay: ballTrail.by, az: ballTrail.bz, at: ballTrail.bt, bx: next.ball.x, by: next.ball.y, bz: next.ball.z, bt: nowT }
+          : { ax: next.ball.x, ay: next.ball.y, az: next.ball.z, at: nowT, bx: next.ball.x, by: next.ball.y, bz: next.ball.z, bt: nowT }
+      }
       const me = next.players.find((p) => p.id === meId)
       if (!me) return
       if (!pred) {
@@ -713,8 +773,10 @@ export async function createWorld(canvas) {
       if (pred) pred.cmd = input
     },
     setInputSource(fn) { inputSource = fn },
+    addAim(delta) { camYaw += delta; aimHold = performance.now() },
     celebrate(at) {
-      for (let i = 0; i < 16; i++) {
+      const count = phoneScreen() ? 6 : 16
+      for (let i = 0; i < count; i++) {
         const m = new THREE.Mesh(
           sparkGeo,
           new THREE.MeshStandardMaterial({ color: i % 2 ? '#ff6a1a' : '#ffd166', roughness: 0.4 }),
@@ -734,7 +796,7 @@ export async function createWorld(canvas) {
         renderer.dispose()
         renderer = makeRenderer(canvas, simple)
       } else {
-        renderer.setPixelRatio(simple ? 1 : Math.min(window.devicePixelRatio || 1, 2))
+        renderer.setPixelRatio(pixelCap(simple))
       }
       retint(scene, simple)
       resize()

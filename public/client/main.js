@@ -124,13 +124,21 @@ function onNet(msg) {
   if (msg.t === 'queue') {
     state.queue = msg.need ? msg : null
     state.room = null
-    if (state.screen === 'lobby') render()
+    if (state.screen === 'lobby' || state.screen === 'home') {
+      if (msg.need) state.screen = 'lobby'
+      render()
+    }
+    return
+  }
+  if (msg.t === 'chat') {
+    pushMatchChat(msg.name, msg.text)
     return
   }
   if (msg.t === 'room') {
     state.room = msg
     state.queue = null
-    state.screen = 'lobby'
+    const stay = state.screen === 'club' && msg.clubId && !msg.versus
+    if (!stay) state.screen = 'lobby'
     state.error = ''
     if (state.pendingNote) {
       const note = state.pendingNote
@@ -264,6 +272,8 @@ function shell() {
   if (state.screen === 'loading') root.append(card(p('Loading the pitch…')))
   else if (!state.me) root.append(authCard())
   else if (state.screen === 'directory') root.append(directoryCard())
+  else if (state.screen === 'friends') root.append(friendsCard())
+  else if (state.screen === 'report') root.append(reportCard())
   else if (state.screen === 'club') root.append(clubCard())
   else if (state.screen === 'ranks') root.append(ranksCard())
   else if (state.screen === 'lobby') root.append(lobbyCard())
@@ -438,10 +448,18 @@ function homeCard() {
   const actions = document.createElement('div')
   actions.className = 'actions'
   actions.append(
-    button('Play vs bots', 'primary', () => { state.screen = 'lobby'; state.error = ''; render() }),
-    button('Club', 'ghost', () => { state.screen = 'club'; render() }),
+    button('Quick Match', 'primary big', () => {
+      state.screen = 'lobby'
+      state.error = ''
+      render()
+      send({ t: 'quick', mode: '2v2', minutes: 3, goalies: true })
+    }),
+    button('Play vs bots', 'ghost', () => { state.screen = 'lobby'; state.error = ''; render() }),
+    button('Club', 'ghost', () => { state.screen = 'club'; state.askedClub = 0; render() }),
+    button('Friends', 'ghost', () => { state.screen = 'friends'; loadFriends(); render() }),
     button('Ranks', 'ghost', () => { state.screen = 'ranks'; loadRanks(); render() }),
-    button('Find friends', 'ghost', () => { state.screen = 'directory'; loadDirectory(); render() }),
+    button('Find players', 'ghost', () => { state.screen = 'directory'; loadDirectory(); render() }),
+    button('Report', 'ghost', () => { state.screen = 'report'; loadReportNames(); render() }),
     button('Controls', 'ghost', () => openHelp(hero)),
   )
   hero.append(slot, actions)
@@ -534,6 +552,8 @@ function noteCard(note) {
     extra.textContent = `${note.payload.mode} · ${note.payload.minutes} min. Accept to join the room.`
   } else if (note.kind === 'club_challenge_result') {
     extra.textContent = 'Challenge update'
+  } else if (note.kind === 'friend_request') {
+    extra.textContent = 'Friend request. Accept to add them to your friends list.'
   } else extra.textContent = 'Club invite'
   text.append(extra)
   const actions = document.createElement('div')
@@ -672,6 +692,14 @@ function profilePanel(player) {
     name.textContent = player.club.name
     row.append(name)
     box.append(row)
+  }
+  if (player.id !== state.me.id) {
+    box.append(button('Add friend', 'ghost', async () => {
+      try {
+        await api('/api/friends', { username: player.username })
+        toast(`Asked ${player.username}`)
+      } catch (err) { toast(err.message) }
+    }))
   }
   if (state.club && state.club.ownerId === state.me.id && player.id !== state.me.id) {
     box.append(button(`Invite to ${state.club.name}`, 'primary', async () => {
@@ -837,6 +865,47 @@ function clubCard() {
       },
     })
   }
+  box.append(h('h3', 'Club match'))
+  if (state.club && state.askedClub !== state.club.id) {
+    state.askedClub = state.club.id
+    send({ t: 'club-lobby' })
+  }
+  if (state.room && state.room.clubId === state.club.id && !state.room.versus) {
+    box.append(roomCard(card()))
+  } else {
+    box.append(p('Pick a mode and length, open the match, ready up, then Start. Empty spots fill with practice ducks so the match can begin.'))
+    const modes = document.createElement('div')
+    modes.className = 'modes'
+    for (const mode of ['1v1', '2v2', '3v3']) {
+      const b = document.createElement('button')
+      b.type = 'button'
+      b.className = `mode${state.mode === mode ? ' on' : ''}`
+      b.textContent = mode
+      b.addEventListener('click', () => { state.mode = mode; render() })
+      modes.append(b)
+    }
+    const minutes = document.createElement('div')
+    minutes.className = 'modes'
+    for (const value of [3, 5]) {
+      const b = document.createElement('button')
+      b.type = 'button'
+      b.className = `minute${state.minutes === value ? ' on' : ''}`
+      b.textContent = `${value} min`
+      b.addEventListener('click', () => { state.minutes = value; render() })
+      minutes.append(b)
+    }
+    box.append(modes, minutes)
+    box.append(button('Open club match', 'primary', () => {
+      send({
+        t: 'host',
+        mode: state.mode,
+        minutes: state.minutes,
+        clubOnly: true,
+        practice: true,
+        goalies: state.mode === '3v3' && state.goalies !== false,
+      })
+    }))
+  }
   if (state.club.ownerId === state.me.id) {
     box.append(h('h3', 'Challenge another club'))
     const opponent = document.createElement('input')
@@ -855,6 +924,123 @@ function clubCard() {
       } catch (err) { toast(err.message) }
     }))
   }
+  return box
+}
+
+async function loadFriends() {
+  state.friends = { status: 'loading', list: state.friends?.list || [] }
+  try {
+    const data = await api('/api/friends')
+    state.friends = { status: '', list: data.friends, q: state.friends?.q || '' }
+  } catch (err) {
+    state.friends = { status: err.message, list: [], q: '' }
+  }
+  if (state.screen === 'friends') render()
+}
+
+function friendsCard() {
+  const box = card()
+  box.append(h('h2', 'Friends'))
+  box.append(p('Sorted by who you played with most recently. Search to filter.'))
+  const search = document.createElement('input')
+  search.type = 'search'
+  search.placeholder = 'Search friends'
+  search.value = state.friends?.q || ''
+  search.addEventListener('input', () => {
+    state.friends = { ...(state.friends || { list: [] }), q: search.value }
+    const list = document.getElementById('friend-list')
+    if (list) paintFriends(list)
+  })
+  const list = document.createElement('div')
+  list.id = 'friend-list'
+  list.className = 'list'
+  box.append(search)
+  if (!state.friends || state.friends.status === 'loading') box.append(p('Loading friends…', 'muted'))
+  else if (state.friends.status) box.append(p(state.friends.status, 'error'))
+  paintFriends(list)
+  box.append(list)
+  return box
+}
+
+function paintFriends(list) {
+  list.replaceChildren()
+  const q = (state.friends?.q || '').trim().toLowerCase()
+  const rows = (state.friends?.list || []).filter((f) => !q || f.username.toLowerCase().includes(q))
+  if (!rows.length) {
+    list.append(p(q ? 'No friend with that name.' : 'No friends yet. Add one from Find players.', 'muted'))
+    return
+  }
+  for (const friend of rows) {
+    const row = document.createElement('div')
+    row.className = 'member'
+    const name = document.createElement('b')
+    name.textContent = friend.username
+    const meta = document.createElement('span')
+    meta.className = 'muted'
+    const when = friend.lastPlayed ? `Played ${friend.lastPlayed.slice(0, 16).replace('T', ' ')}` : 'No match together yet'
+    meta.textContent = `${friend.online ? 'Online' : 'Offline'} · ${when}`
+    row.append(name, meta, button('Remove', 'ghost', async () => {
+      try {
+        await api('/api/friends/remove', { id: friend.id })
+        await loadFriends()
+      } catch (err) { toast(err.message) }
+    }))
+    list.append(row)
+  }
+}
+
+async function loadReportNames() {
+  state.reportNames = []
+  try {
+    const data = await api('/api/reports/names')
+    state.reportNames = data.names || []
+  } catch { state.reportNames = [] }
+  if (state.screen === 'report') render()
+}
+
+function reportCard() {
+  const box = card()
+  box.append(h('h2', 'Report'))
+  box.append(p('Report a player from a recent match, or tell us about a map problem.'))
+  const names = state.reportNames || []
+  const pick = document.createElement('select')
+  const blank = document.createElement('option')
+  blank.value = ''
+  blank.textContent = names.length ? 'Player from a recent match' : 'No recent opponents yet'
+  pick.append(blank)
+  for (const name of names) {
+    const opt = document.createElement('option')
+    opt.value = name
+    opt.textContent = name
+    pick.append(opt)
+  }
+  const reason = document.createElement('select')
+  for (const label of ['Unsportsmanlike', 'Cheating', 'Harassment', 'Other']) {
+    const opt = document.createElement('option')
+    opt.value = label
+    opt.textContent = label
+    reason.append(opt)
+  }
+  const note = document.createElement('textarea')
+  note.maxLength = 80
+  note.placeholder = 'What happened?'
+  const mapNote = document.createElement('textarea')
+  mapNote.maxLength = 80
+  mapNote.placeholder = 'Map idea or problem'
+  box.append(h('h3', 'Player'), pick, reason, note, button('Report player', 'primary', async () => {
+    try {
+      await api('/api/reports', { kind: 'player', targetName: pick.value, reason: reason.value, body: note.value })
+      note.value = ''
+      toast('Report sent')
+    } catch (err) { toast(err.message) }
+  }))
+  box.append(h('h3', 'Map'), mapNote, button('Report map', 'ghost', async () => {
+    try {
+      await api('/api/reports', { kind: 'map', body: mapNote.value })
+      mapNote.value = ''
+      toast('Map note sent')
+    } catch (err) { toast(err.message) }
+  }))
   return box
 }
 
@@ -949,7 +1135,9 @@ function lobbyCard() {
   box.append(h('h2', 'Match'))
   if (state.queue) {
     const keeper = state.queue.mode === '3v3' ? (state.queue.goalies === false ? ' · no goalies' : ' · goalies') : ''
-    box.append(p(`Looking for a ${state.queue.mode} · ${state.queue.minutes} min${keeper}. ${state.queue.count}/${state.queue.need} ducks in the queue.`))
+    const kind = state.queue.quick ? 'Quick match' : 'Ranked queue'
+    box.append(p(`${kind}: ${state.queue.mode} · ${state.queue.minutes} min${keeper}. ${state.queue.count}/${state.queue.need} ducks.`))
+    if (state.queue.quick) box.append(p('If the queue is still short, practice ducks fill in and the match starts.', 'muted'))
     box.append(button('Leave queue', 'ghost', () => send({ t: 'leave-queue' })))
     return box
   }
@@ -1067,6 +1255,9 @@ function lobbyCard() {
         goalies: state.mode === '3v3' && state.goalies !== false,
       })
     }),
+    button('Quick Match', 'primary', () => {
+      send({ t: 'quick', mode: state.mode, minutes: state.minutes, goalies: state.mode === '3v3' && state.goalies !== false })
+    }),
     button('Queue ranked', 'ghost', () => {
       send({ t: 'queue', mode: state.mode, minutes: state.minutes, goalies: state.mode === '3v3' && state.goalies !== false })
     }),
@@ -1109,7 +1300,7 @@ function roomCard(box) {
       : room.practice
         ? 'Practice ducks will fill empty spots. Ranked rating stays put.'
         : clubRoom
-          ? 'The owner sets the match. Everyone else presses Ready, then the owner starts.'
+          ? 'Pick the mode and length, ready up, then the host presses Start. Empty spots fill with practice ducks.'
           : 'Teams are balanced by rating when the host starts.',
   ))
   if (clubRoom && mine && !room.versus) {
@@ -1154,7 +1345,7 @@ function roomCard(box) {
     const row = document.createElement('div')
     row.className = 'member'
     const name = document.createElement('b')
-    name.textContent = `${player.name}${player.id === room.hostId ? (clubRoom ? ' · owner' : ' · host') : ''}${player.side === 'A' ? ' · home' : ''}${player.side === 'B' ? ' · away' : ''}${player.goalie ? ' · goalie' : ''}${clubRoom && player.ready ? ' · ready' : ''}`
+    name.textContent = `${player.name}${player.id === room.hostId ? ' · host' : ''}${player.side === 'A' ? ' · home' : ''}${player.side === 'B' ? ' · away' : ''}${player.goalie ? ' · goalie' : ''}${clubRoom && player.ready ? ' · ready' : ''}`
     const meta = document.createElement('span')
     meta.className = 'muted'
     meta.textContent = `${rankFor(player.rating)} ${player.rating}`
@@ -1176,8 +1367,35 @@ function roomCard(box) {
   }
   if (mine) actions.append(button('Start match', 'primary', () => send({ t: 'start' })))
   actions.append(button('Leave room', 'ghost', () => send({ t: 'leave' })))
-  box.append(p(state.error, 'error'), actions)
+  box.append(chatBox(), p(state.error, 'error'), actions)
   return box
+}
+
+function chatBox() {
+  const wrap = document.createElement('div')
+  wrap.className = 'chat-box'
+  const log = document.createElement('div')
+  log.className = 'chat-log'
+  for (const line of state.room?.chat || []) {
+    const row = document.createElement('div')
+    const name = document.createElement('b')
+    name.textContent = line.name
+    row.append(name, document.createTextNode(` ${line.text}`))
+    log.append(row)
+  }
+  if (!log.childNodes.length) log.append(p('Chat is quiet.', 'muted'))
+  const inputEl = document.createElement('input')
+  inputEl.maxLength = 80
+  inputEl.placeholder = 'Say something'
+  inputEl.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return
+    const text = inputEl.value.trim()
+    if (!text) return
+    send({ t: 'say', text })
+    inputEl.value = ''
+  })
+  wrap.append(h('h3', 'Chat'), log, inputEl)
+  return wrap
 }
 
 function invitePicker(room) {
@@ -1252,6 +1470,10 @@ function showMatch() {
   matchEl.prepend(stage)
   syncTouch()
   buildPad()
+  buildQuickChat()
+  maybeTips()
+  syncOrient()
+  if (state.scheme === 'phone') screen.orientation?.lock?.('landscape')?.catch(() => {})
   world.resize()
 }
 
@@ -1259,8 +1481,56 @@ function hideMatch() {
   matchEl.classList.add('hidden')
   matchEl.setAttribute('aria-hidden', 'true')
   document.body.classList.remove('playing')
+  screen.orientation?.unlock?.()
   world?.setDemo()
   banner.classList.add('hidden')
+}
+
+function syncOrient() {
+  document.body.classList.toggle('portrait', matchMedia('(orientation: portrait)').matches)
+}
+
+function pushMatchChat(name, text) {
+  const log = document.getElementById('match-log')
+  if (!log) return
+  const row = document.createElement('div')
+  const who = document.createElement('b')
+  who.textContent = name
+  row.append(who, document.createTextNode(` ${text}`))
+  log.append(row)
+  while (log.children.length > 4) log.firstChild.remove()
+}
+
+function buildQuickChat() {
+  let row = document.getElementById('quick-chat')
+  if (!row) {
+    row = document.createElement('div')
+    row.id = 'quick-chat'
+    const log = document.createElement('div')
+    log.id = 'match-log'
+    row.append(log)
+    const buttons = document.createElement('div')
+    buttons.className = 'quick-row'
+    for (const text of ['Nice!', 'I got it', 'Pass', 'Sorry']) {
+      buttons.append(button(text, 'ghost', () => send({ t: 'say', text })))
+    }
+    row.append(buttons)
+    matchEl.append(row)
+  }
+}
+
+function maybeTips() {
+  if (localStorage.getItem('md-tips')) return
+  const tip = document.createElement('div')
+  tip.id = 'tips'
+  tip.textContent = state.scheme === 'phone'
+    ? 'Drag the left side to run. Shoot or Tackle, Spin, and Sprint are on the right.'
+    : 'Move the mouse to turn while you run. With the ball: left click shoots, right click spins. Without it: left click tackles, hold right click to spin.'
+  matchEl.append(tip)
+  setTimeout(() => {
+    tip.remove()
+    localStorage.setItem('md-tips', '1')
+  }, 7000)
 }
 
 function mergeSnap(prev, next) {
@@ -1359,18 +1629,27 @@ function buildPad() {
   const celebrate = snap?.phase === 'celebrate' && me && me.team === snap.celebrateTeam
   const waiting = snap?.phase === 'celebrate' && me && me.team !== snap.celebrateTeam
   const charging = goalieCharging()
+  const hasBall = snap?.ball?.owner === String(state.me?.id)
+  const phone = state.scheme === 'phone'
   const buttons = celebrate
     ? [['spin', 'Spin'], ['quack', 'Quack'], ['bob', 'Bob'], ['sit', 'Sit'], ['glide', 'Glide']]
     : waiting
       ? []
-      : [
-          ['sprint', 'Sprint', true],
-          ['spin', 'Spin'],
-          charging ? ['stop', 'Stop'] : ['kick', 'Kick'],
-          ['slide', 'Slide'],
-          ['pass', 'Pass'],
-          ...(me?.goalie ? [['dive', 'Dive']] : []),
-        ]
+      : phone
+        ? [
+            ['sprint', 'Sprint', true],
+            charging ? ['stop', 'Stop'] : hasBall ? ['kick', 'Shoot'] : ['slide', 'Tackle'],
+            ['spin', 'Spin'],
+            ...(me?.goalie && !hasBall ? [['dive', 'Dive']] : []),
+          ]
+        : [
+            ['sprint', 'Sprint', true],
+            ['spin', 'Spin'],
+            charging ? ['stop', 'Stop'] : ['kick', 'Kick'],
+            ['slide', 'Slide'],
+            ['pass', 'Pass'],
+            ...(me?.goalie ? [['dive', 'Dive']] : []),
+          ]
   const signature = JSON.stringify(buttons.map((b) => b[0]))
   if (pad.dataset.sig === signature) return
   pad.dataset.sig = signature
@@ -1433,6 +1712,7 @@ function currentStick() {
     slide: input.slide,
     spin: input.spin,
     dive: input.dive,
+    spinHold: !!input.spinHold,
     emote: input.emoteName,
     emoteId: input.emote,
     sens: readSens(),
@@ -1556,7 +1836,8 @@ function helpNode() {
   keysTitle.textContent = 'Keyboard'
   const keyList = document.createElement('ul')
   for (const line of [
-    'Move with W A S D or the arrow keys. The camera stays behind your duck.',
+    'Move with W A S D or the arrow keys. Move the mouse to turn while you run. The camera stays where you aim.',
+    'With the ball, left click shoots and right click spins the dribble. Without the ball, left click slide tackles and holding right click spins you in place.',
     'Sprint: hold Shift. The stamina bar drains, then refills when you let go. Sprinting with the ball is slower than sprinting without it.',
     'Kick: K or Space. Pass: J. When you are the goalie and you have the ball, the power bar slides. Press Enter to lock it and shoot.',
     'Slide tackle: C. If you miss, you are stunned briefly and the move goes on cooldown.',
@@ -1572,9 +1853,9 @@ function helpNode() {
   touchTitle.textContent = 'Phone and tablet'
   const touchList = document.createElement('ul')
   for (const line of [
-    'Drag the joystick to move.',
+    'Drag the left side of the screen. A joystick appears under your thumb.',
     'Hold Sprint. It uses the same stamina bar, and it is slower while you have the ball.',
-    'Tap Kick, Pass, Slide, or Spin. Spin is the dribble dodge. As goalie with the ball, tap Stop when the power bar is where you want it.',
+    'Shoot when you have the ball, Tackle when you do not. Spin dodges. As goalie with the ball, tap Stop when the power bar is where you want it.',
     'In 3v3 the goalie gets Dive instead of an extra button piled on the screen.',
     'After a goal the pad swaps to Spin, Quack, Bob, Sit, and Glide for the scoring team. The other team waits.',
   ]) {
@@ -1698,6 +1979,40 @@ function setupInput() {
     joy.y = ny * feel
     placeKnob(nx, ny, feel)
   }
+  matchEl.addEventListener('mousemove', (e) => {
+    if (state.screen !== 'match' || state.scheme === 'phone') return
+    if (!e.movementX) return
+    world?.addAim(e.movementX * 0.0035)
+  })
+  matchEl.addEventListener('contextmenu', (e) => {
+    if (state.screen === 'match') e.preventDefault()
+  })
+  matchEl.addEventListener('mousedown', (e) => {
+    if (state.screen !== 'match' || state.scheme === 'phone') return
+    if (e.target.closest && e.target.closest('button, input, #quick-chat, #help')) return
+    const has = state.snap?.ball?.owner === String(state.me?.id)
+    if (e.button === 0) {
+      if (has) { input.kick += 1; playKick() } else input.slide += 1
+      flushInput()
+    } else if (e.button === 2) {
+      if (has) input.spin += 1
+      else input.spinHold = true
+      flushInput()
+    }
+  })
+  window.addEventListener('mouseup', (e) => {
+    if (e.button !== 2 || !input.spinHold) return
+    input.spinHold = false
+    flushInput()
+  })
+  matchEl.addEventListener('touchstart', (e) => {
+    if (state.scheme !== 'phone' || state.screen !== 'match') return
+    const t = [...e.changedTouches].find((touch) => touch.clientX < window.innerWidth * 0.55)
+    if (!t || (e.target.closest && e.target.closest('#pad, button, #quick-chat'))) return
+    stick.style.left = `${t.clientX - 70}px`
+    stick.style.top = `${t.clientY - 70}px`
+  }, { passive: true })
+  window.addEventListener('orientationchange', syncOrient)
   document.getElementById('help-btn').addEventListener('click', () => openHelp(null))
   document.getElementById('leave-btn').addEventListener('click', () => {
     send({ t: 'leave' })

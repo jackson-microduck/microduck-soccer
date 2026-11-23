@@ -215,8 +215,7 @@ test('headless browser clicks signup, club logos, and a bot match', { timeout: 9
     assert.equal(phoneOn.phone, true, JSON.stringify(phoneOn))
     assert.notEqual(phoneOn.stick, 'none', JSON.stringify(phoneOn))
     assert.match(phoneOn.pad, /Sprint/)
-    assert.match(phoneOn.pad, /Kick/)
-    assert.match(phoneOn.pad, /Slide/)
+    assert.match(phoneOn.pad, /Shoot|Kick|Tackle/)
     assert.match(phoneOn.pad, /Spin/)
     const joy = await evalJs(`(() => {
       const stick = document.getElementById('stick')

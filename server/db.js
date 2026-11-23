@@ -73,6 +73,24 @@ CREATE TABLE IF NOT EXISTS notifications (
   status TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS friend_edges (
+  user_id INTEGER NOT NULL,
+  friend_id INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_played TEXT,
+  PRIMARY KEY (user_id, friend_id)
+);
+CREATE TABLE IF NOT EXISTS reports (
+  id INTEGER PRIMARY KEY,
+  reporter_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  target_name TEXT,
+  reason TEXT,
+  body TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS matches (
   id INTEGER PRIMARY KEY,
   mode TEXT NOT NULL,
@@ -426,4 +444,93 @@ export function persistResult(db, { mode, minutes, score, players }) {
     )
   }
   return matchId
+}
+
+export function requestFriend(db, userId, friendId) {
+  const row = db.prepare(
+    'SELECT status, user_id, friend_id FROM friend_edges WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)',
+  ).get(userId, friendId, friendId, userId)
+  if (row?.status === 'accepted') return 'accepted'
+  if (row?.status === 'pending') return 'pending'
+  if (row) return row.status
+  const now = new Date().toISOString()
+  db.prepare(
+    'INSERT INTO friend_edges (user_id, friend_id, status, created_at, last_played) VALUES (?, ?, ?, ?, ?)',
+  ).run(userId, friendId, 'pending', now, null)
+  return 'new'
+}
+
+export function acceptFriend(db, userId, fromId) {
+  const edge = db.prepare('SELECT * FROM friend_edges WHERE user_id = ? AND friend_id = ? AND status = ?').get(fromId, userId, 'pending')
+  if (!edge) return false
+  const now = new Date().toISOString()
+  db.prepare('UPDATE friend_edges SET status = ? WHERE user_id = ? AND friend_id = ?').run('accepted', fromId, userId)
+  db.prepare(
+    'INSERT INTO friend_edges (user_id, friend_id, status, created_at, last_played) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, friend_id) DO UPDATE SET status = excluded.status',
+  ).run(userId, fromId, 'accepted', now, edge.last_played)
+  return true
+}
+
+export function removeFriend(db, userId, friendId) {
+  db.prepare(
+    'DELETE FROM friend_edges WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)',
+  ).run(userId, friendId, friendId, userId)
+}
+
+export function listFriends(db, userId) {
+  const rows = db.prepare(`
+    SELECT u.id AS id, u.username AS username, e.last_played AS last_played
+    FROM friend_edges e
+    JOIN users u ON u.id = CASE WHEN e.user_id = ? THEN e.friend_id ELSE e.user_id END
+    WHERE e.status = 'accepted' AND (e.user_id = ? OR e.friend_id = ?)
+  `).all(userId, userId, userId)
+  const map = new Map()
+  for (const row of rows) {
+    const prev = map.get(row.id)
+    const lastPlayed = row.last_played || null
+    if (!prev || (lastPlayed && String(lastPlayed) > String(prev.lastPlayed || ''))) {
+      map.set(row.id, { id: row.id, username: row.username, lastPlayed })
+    }
+  }
+  return [...map.values()].sort((a, b) => String(b.lastPlayed || '').localeCompare(String(a.lastPlayed || '')))
+}
+
+export function touchFriendPlay(db, ids) {
+  const humans = [...new Set(ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))]
+  if (humans.length < 2) return
+  const now = new Date().toISOString()
+  const upd = db.prepare(
+    'UPDATE friend_edges SET last_played = ? WHERE status = ? AND ((user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?))',
+  )
+  for (let i = 0; i < humans.length; i++) {
+    for (let j = i + 1; j < humans.length; j++) upd.run(now, 'accepted', humans[i], humans[j], humans[j], humans[i])
+  }
+}
+
+export function recentNames(db, userId) {
+  return db.prepare(`
+    SELECT u.username AS username, MAX(mp.match_id) AS mid
+    FROM match_players mine
+    JOIN match_players mp ON mp.match_id = mine.match_id AND mp.user_id != mine.user_id
+    JOIN users u ON u.id = mp.user_id
+    WHERE mine.user_id = ? AND COALESCE(u.is_bot, 0) = 0
+    GROUP BY u.username
+    ORDER BY mid DESC
+    LIMIT 8
+  `).all(userId).map((row) => row.username)
+}
+
+export function addReport(db, { reporterId, kind, targetName, reason, body }) {
+  const now = new Date().toISOString()
+  db.prepare(
+    'INSERT INTO reports (reporter_id, kind, target_name, reason, body, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+  ).run(reporterId, kind, targetName || '', reason || '', body, 'open', now)
+}
+
+export function listReports(db) {
+  return db.prepare(`
+    SELECT r.id, r.kind, r.target_name AS targetName, r.reason, r.body, r.status, r.created_at AS createdAt, u.username AS reporter
+    FROM reports r JOIN users u ON u.id = r.reporter_id
+    ORDER BY r.id DESC LIMIT 100
+  `).all()
 }

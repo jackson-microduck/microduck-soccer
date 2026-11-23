@@ -328,6 +328,7 @@ export function setInput(match, id, msg) {
     p.cmd.mz /= mag
   }
   p.cmd.sprint = !!msg.sprint
+  p.cmd.spinHold = !!msg.spinHold
   const power = Number(msg.power)
   if (Number.isFinite(power)) p.cmd.power = clamp(power, 0, 1)
   const sens = Number(msg.sens)
@@ -459,12 +460,21 @@ function handleButtons(match, p) {
 }
 
 export function integrateMover(p, dt, match) {
+  if (match && (match.phase === 'countdown' || match.phase === 'fulltime')) {
+    p.vx = 0
+    p.vz = 0
+    p.sprinting = false
+    p.slideT = 0
+    p.spinning = 0
+    p.diving = 0
+    return
+  }
   const ballOwned = match && match.ball.owner === p.id
   const special = p.slideT > 0 || p.diving > 0 || p.spinning > 0
-  const frozen = p.stun > 0 || !match || match.phase === 'countdown' || match.phase === 'fulltime'
-    || (match.phase === 'celebrate' && p.team !== match.celebrateTeam)
+  const frozen = p.stun > 0 || !match || (match.phase === 'celebrate' && p.team !== match.celebrateTeam)
   let mx = frozen ? 0 : p.cmd.mx
   let mz = frozen ? 0 : p.cmd.mz
+  if (p.cmd.spinHold && !ballOwned && !frozen && p.slideT <= 0 && p.spinning <= 0) p.yaw += dt * 7
   if (match && match.phase === 'celebrate') {
     p.sprinting = false
   }
@@ -815,10 +825,20 @@ export function step(match, dt) {
     for (const p of match.players) {
       p.vx = 0
       p.vz = 0
+      p.cmd.mx = 0
+      p.cmd.mz = 0
+      p.cmd.sprint = false
+      p.sprinting = false
+      p.slideT = 0
+      p.spinning = 0
+      p.diving = 0
       p.pressed = {}
     }
     const kicker = playerById(match, match.ball.owner)
     if (kicker) stickBall(match, kicker)
+    else {
+      match.ball.vx = match.ball.vy = match.ball.vz = 0
+    }
     if (match.phaseT <= 0) {
       match.phase = 'play'
       events.push({ type: 'play' })

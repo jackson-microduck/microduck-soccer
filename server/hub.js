@@ -8,9 +8,9 @@ import {
   snapshot,
   step,
 } from '../public/shared/game.js'
-import { createNotification, getUserById, membership, persistResult, recordClubMatch } from './db.js'
+import { createNotification, getUserById, membership, persistResult, recordClubMatch, touchFriendPlay } from './db.js'
 import { BOT_DIFFICULTIES, botRoster, driveBots } from './bots.js'
-import { randomCode } from './auth.js'
+import { cleanChat, randomCode } from './auth.js'
 
 const TICK = 1 / 60
 
@@ -52,12 +52,13 @@ export function createHub(db) {
 
   function broadcastQueue(key) {
     const list = queues.get(key) || []
-    const [mode, minutes, goalies] = key.split(':')
+    const [mode, minutes, goalies, kind] = key.split(':')
     const payload = {
       t: 'queue',
       mode,
       minutes: Number(minutes),
       goalies: goalies === '1',
+      quick: kind === 'q',
       count: list.length,
       need: MODES[mode] ? MODES[mode].players : 0,
     }
@@ -91,6 +92,7 @@ export function createHub(db) {
         side: p.side || null,
       })),
       invites: room.invites,
+      chat: room.chat || [],
     }
   }
 
@@ -205,6 +207,7 @@ export function createHub(db) {
     if (live.done) return
     live.done = true
     const settled = settlePlayers(live.match)
+    touchFriendPlay(db, settled.filter((p) => !p.bot).map((p) => p.id))
     if (live.match.ranked) {
       persistResult(db, {
         mode: live.match.mode,
@@ -250,17 +253,35 @@ export function createHub(db) {
     matches.delete(live.id)
   }
 
+  let netTick = 0
   function tick() {
+    netTick++
+    const sendSnap = netTick % 3 === 0
+    for (const [key, list] of queues) {
+      if (!key.endsWith(':q') || !list.length) continue
+      const [mode, minutes, goalies] = key.split(':')
+      const need = MODES[mode]?.players || 0
+      const waited = Date.now() - (list[0].queueAt || Date.now())
+      if (list.length < need && waited < 8000) continue
+      const taken = list.splice(0, Math.min(need, list.length))
+      for (const c of taken) c.queue = null
+      beginMatch(taken, {
+        mode,
+        minutes: Number(minutes),
+        fill: true,
+        goalies: goalies === '1',
+      })
+      broadcastQueue(key)
+    }
     for (const live of matches.values()) {
       driveBots(live.match)
       const events = step(live.match, TICK)
-      const snap = JSON.stringify(snapshot(live.match, true))
+      const snap = sendSnap ? JSON.stringify(snapshot(live.match, true)) : null
       const extra = events.length ? JSON.stringify({ t: 'events', events }) : null
       for (const ws of live.sockets) {
-        if (ws.readyState === 1) {
-          if (extra) ws.send(extra)
-          ws.send(snap)
-        }
+        if (ws.readyState !== 1) continue
+        if (extra) ws.send(extra)
+        if (snap) ws.send(snap)
       }
       if (live.match.over) finish(live)
     }
@@ -268,6 +289,25 @@ export function createHub(db) {
 
   function onMessage(conn, msg) {
     if (!msg || typeof msg !== 'object') return
+    if (msg.t === 'quick' || msg.t === 'queue') {
+      if (msg.t === 'quick') {
+        const mode = msg.mode
+        const minutes = Number(msg.minutes)
+        if (!MODES[mode] || ![3, 5].includes(minutes)) return fail(conn, 'Pick 1v1, 2v2, or 3v3 and a 3 or 5 minute match.')
+        if (conn.matchId) return fail(conn, 'You are already in a match.')
+        leaveRoom(conn)
+        leaveQueue(conn)
+        const goalies = useGoalies(mode, msg.goalies) ? 1 : 0
+        const key = `${mode}:${minutes}:${goalies}:q`
+        const list = queues.get(key) || []
+        conn.queueAt = Date.now()
+        if (!list.includes(conn)) list.push(conn)
+        queues.set(key, list)
+        conn.queue = key
+        broadcastQueue(key)
+        return
+      }
+    }
     if (msg.t === 'queue') {
       const mode = msg.mode
       const minutes = Number(msg.minutes)
@@ -329,7 +369,16 @@ export function createHub(db) {
       if (msg.clubOnly) {
         if (!user.club_id) return fail(conn, 'Join a club before hosting a club match.')
         club = db.prepare('SELECT * FROM clubs WHERE id = ?').get(user.club_id)
-        if (!club || club.owner_id !== user.id) return fail(conn, 'Only the club owner sets the match.')
+        if (!club || !membership(db, user.id, club.id)) return fail(conn, 'Join a club before hosting a club match.')
+        const open = [...rooms.values()].find((r) => r.clubId === club.id && !r.versus && !r.started)
+        if (open) {
+          conn.roomCode = open.code
+          if (!open.players.some((p) => p.id === user.id)) {
+            open.players.push({ ...fresh(user.id), wantGoalie: false, ready: false })
+          }
+          sendRoom(open)
+          return
+        }
       }
       let code = randomCode()
       for (let i = 0; i < 8 && rooms.has(code); i++) code = randomCode()
@@ -417,8 +466,8 @@ export function createHub(db) {
     if (msg.t === 'options') {
       const room = rooms.get(conn.roomCode)
       if (!room || room.started) return
-      if (room.hostId !== conn.user.id) return fail(conn, 'Only the club owner sets the match.')
-      if (!room.clubId || room.versus) return fail(conn, 'Only the club owner sets the match.')
+      if (room.hostId !== conn.user.id) return fail(conn, 'Only the host sets the match.')
+      if (!room.clubId || room.versus) return fail(conn, 'Only the host sets the match.')
       const mode = msg.mode
       const minutes = Number(msg.minutes)
       if (!MODES[mode] || ![3, 5].includes(minutes)) return fail(conn, 'Pick a mode and a 3 or 5 minute length.')
@@ -512,7 +561,7 @@ export function createHub(db) {
         minutes: room.minutes,
         clubName: room.versus ? null : room.clubName,
         clubLogo: room.clubLogo,
-        fill: room.versus ? false : room.practice,
+        fill: room.versus ? false : !!(room.practice || room.clubId),
         goalies: room.goalies,
         sides,
         homeName: room.versus ? room.clubName : 'Orange',
@@ -543,6 +592,43 @@ export function createHub(db) {
         conn.matchId = null
       }
       send(conn.ws, { t: 'left' })
+      return
+    }
+    if (msg.t === 'say') {
+      const text = cleanChat(msg.text)
+      if (!text) return
+      if (conn.chatAt && Date.now() - conn.chatAt < 400) return
+      conn.chatAt = Date.now()
+      if (conn.matchId && matches.has(conn.matchId)) {
+        const live = matches.get(conn.matchId)
+        const payload = JSON.stringify({ t: 'chat', name: conn.user.username, text })
+        for (const ws of live.sockets) if (ws.readyState === 1) ws.send(payload)
+        return
+      }
+      const room = rooms.get(conn.roomCode)
+      if (!room) return
+      room.chat = room.chat || []
+      room.chat.push({ name: conn.user.username, text })
+      if (room.chat.length > 30) room.chat.shift()
+      sendRoom(room)
+      return
+    }
+    if (msg.t === 'club-lobby') {
+      const user = getUserById(db, conn.user.id)
+      if (!user?.club_id || !membership(db, user.id, user.club_id)) return
+      const room = [...rooms.values()].find((r) => r.clubId === user.club_id && !r.versus && !r.started)
+      if (!room) return
+      if (room.players.some((p) => p.id === user.id)) {
+        conn.roomCode = room.code
+        sendRoom(room)
+        return
+      }
+      if (room.players.length >= MODES[room.mode].players) return
+      leaveQueue(conn)
+      leaveRoom(conn)
+      room.players.push({ ...fresh(user.id), wantGoalie: false, ready: false })
+      conn.roomCode = room.code
+      sendRoom(room)
       return
     }
     if (msg.t === 'in') {
