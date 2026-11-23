@@ -268,7 +268,10 @@ test('play vs bots fills both teams and does not change rating', async () => {
     const after = await fetch(`http://127.0.0.1:${app.port}/api/me`, { headers: { cookie } })
     const body = await after.json()
     assert.equal(body.user.rating, 1000)
-    assert.equal(body.user.matches, 0)
+    assert.equal(body.user.matches, 1)
+    assert.equal(body.user.draws, 1)
+    assert.equal(body.user.goals, 0)
+    assert.equal(body.user.wins, 0)
 
     ws.send({ t: 'bots', mode: '3v3', minutes: 5, difficulty: 'easy' })
     const third = await ws.waitFor((m) => m.t === 'start' && m.snap.mode === '3v3')

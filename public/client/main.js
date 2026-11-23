@@ -1706,6 +1706,7 @@ function currentStick() {
   return {
     mx: move.mx,
     mz: move.mz,
+    aim: yaw,
     sprint: input.sprint || keys.has('ShiftLeft') || keys.has('ShiftRight'),
     kick: input.kick,
     pass: input.pass,

@@ -300,6 +300,30 @@ test('a 3v3 can start with no goalies, and a goalie kick follows the power bar',
   assert.ok(shot(1) > shot(0.2) + 1)
 })
 
+test('a shot follows the aim direction instead of auto-aiming at the goal', () => {
+  const match = duel()
+  match.phase = 'play'
+  const ada = match.players[0]
+  ada.x = 0
+  ada.z = 0
+  ada.yaw = 0
+  ada.vx = 1.2
+  ada.vz = 0
+  ada.cmd.aim = Math.PI / 2
+  match.ball.owner = ada.id
+  match.ball.x = ada.x
+  match.ball.z = ada.z + 0.18
+  ada.pressed.kick = true
+  step(match, 1 / 60)
+  assert.ok(match.ball.vx > 2, `vx ${match.ball.vx}`)
+  assert.ok(Math.abs(match.ball.vz) < 0.35, `vz ${match.ball.vz}`)
+  const aimX = Math.sin(ada.cmd.aim)
+  const aimZ = Math.cos(ada.cmd.aim)
+  for (let i = 0; i < 8; i++) step(match, 1 / 60)
+  const lateral = Math.abs(match.ball.x * aimZ - match.ball.z * aimX)
+  assert.ok(lateral < 0.08, `lateral ${lateral}`)
+})
+
 test('rating rewards goals and assists, and teams get balanced by rank', () => {
   const plain = ratingDelta({ teamAvg: 1000, oppAvg: 1000, won: true, draw: false, goals: 0, assists: 0 })
   const star = ratingDelta({ teamAvg: 1000, oppAvg: 1000, won: true, draw: false, goals: 2, assists: 1 })

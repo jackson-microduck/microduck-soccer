@@ -329,6 +329,8 @@ export function setInput(match, id, msg) {
   }
   p.cmd.sprint = !!msg.sprint
   p.cmd.spinHold = !!msg.spinHold
+  const aim = Number(msg.aim)
+  if (Number.isFinite(aim)) p.cmd.aim = aim
   const power = Number(msg.power)
   if (Number.isFinite(power)) p.cmd.power = clamp(power, 0, 1)
   const sens = Number(msg.sens)
@@ -368,16 +370,29 @@ function nudgeTowardGoal(match, p) {
   if (diff < 0.65) p.yaw = lerpAngle(p.yaw, aim, 0.75)
 }
 
-function releaseBall(match, p, speed, lift, pass) {
+function releaseBall(match, p, speed, lift, pass, exact) {
   const ball = match.ball
-  const s = Math.sin(p.yaw)
-  const c = Math.cos(p.yaw)
+  const yaw = exact && Number.isFinite(p.cmd.aim) ? p.cmd.aim : p.yaw
+  const s = Math.sin(yaw)
+  const c = Math.cos(yaw)
+  // Start on the camera ray. Aim at a point far along that ray so a ball that
+  // was sitting in front of the body (left of the crosshair) still converges
+  // on the crosshair instead of flying parallel to it.
+  const fromX = p.x + s * (DRIBBLE + 0.05)
+  const fromZ = p.z + c * (DRIBBLE + 0.05)
+  const tx = p.x + s * 12
+  const tz = p.z + c * 12
+  let dx = tx - fromX
+  let dz = tz - fromZ
+  const len = Math.hypot(dx, dz) || 1
+  dx /= len
+  dz /= len
   ball.owner = null
-  ball.x = p.x + s * (DRIBBLE + 0.05)
-  ball.z = p.z + c * (DRIBBLE + 0.05)
+  ball.x = fromX
+  ball.z = fromZ
   ball.y = BALL_R + 0.02
-  ball.vx = s * speed + p.vx * 0.25
-  ball.vz = c * speed + p.vz * 0.25
+  ball.vx = dx * speed + (exact ? 0 : p.vx * 0.25)
+  ball.vz = dz * speed + (exact ? 0 : p.vz * 0.25)
   ball.vy = lift
   ball.grabLock = 0.32
   p.pickupLock = 0.42
@@ -441,7 +456,9 @@ function handleButtons(match, p) {
     p.animT = 0
   }
   if (p.pressed.kick && hasBall(match, p) && p.spinning <= 0) {
-    nudgeTowardGoal(match, p)
+    const aimed = Number.isFinite(p.cmd.aim)
+    if (aimed) p.yaw = p.cmd.aim
+    else nudgeTowardGoal(match, p)
     let speed = KICK_SPEED
     let lift = KICK_LIFT
     if (p.goalie && Number.isFinite(p.cmd.power)) {
@@ -449,7 +466,7 @@ function handleButtons(match, p) {
       speed = KICK_SPEED * (0.42 + 0.78 * pow)
       lift = KICK_LIFT * (0.55 + 0.7 * pow)
     }
-    releaseBall(match, p, speed, lift, false)
+    releaseBall(match, p, speed, lift, false, aimed)
   } else if (p.pressed.pass && hasBall(match, p) && p.spinning <= 0) {
     const mate = aimAtTeammate(match, p)
     if (mate) {
@@ -592,8 +609,9 @@ function clampPlayers(match) {
 
 function stickBall(match, p) {
   const ball = match.ball
-  ball.x = p.x + Math.sin(p.yaw) * DRIBBLE
-  ball.z = p.z + Math.cos(p.yaw) * DRIBBLE
+  const yaw = Number.isFinite(p.cmd.aim) ? p.cmd.aim : p.yaw
+  ball.x = p.x + Math.sin(yaw) * DRIBBLE
+  ball.z = p.z + Math.cos(yaw) * DRIBBLE
   ball.y = BALL_R
   ball.vx = p.vx
   ball.vy = 0

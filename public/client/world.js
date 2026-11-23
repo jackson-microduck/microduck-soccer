@@ -634,8 +634,9 @@ export async function createWorld(canvas) {
       let bz = snap.ball.z
       const ownBall = me && snap.ball.owner === meId && pred
       if (ownBall) {
-        bx = pred.x + Math.sin(pred.yaw) * DRIBBLE
-        bz = pred.z + Math.cos(pred.yaw) * DRIBBLE
+        const hold = aimYaw
+        bx = pred.x + Math.sin(hold) * DRIBBLE
+        bz = pred.z + Math.cos(hold) * DRIBBLE
         by = 0.078
         ballShown.x = bx
         ballShown.y = by
@@ -717,6 +718,7 @@ export async function createWorld(canvas) {
       camYaw = 0
     },
     pushSnap(next, input) {
+      const prevBall = snap && snap.ball
       snap = next
       const nowT = performance.now()
       for (const p of next.players) {
@@ -727,9 +729,15 @@ export async function createWorld(canvas) {
           : { ax: p.x, az: p.z, ay: p.yaw, at: nowT, bx: p.x, bz: p.z, by: p.yaw, bt: nowT })
       }
       if (next.ball) {
-        ballTrail = ballTrail
-          ? { ax: ballTrail.bx, ay: ballTrail.by, az: ballTrail.bz, at: ballTrail.bt, bx: next.ball.x, by: next.ball.y, bz: next.ball.z, bt: nowT }
-          : { ax: next.ball.x, ay: next.ball.y, az: next.ball.z, at: nowT, bx: next.ball.x, by: next.ball.y, bz: next.ball.z, bt: nowT }
+        const released = prevBall && prevBall.owner && !next.ball.owner
+        ballTrail = !ballTrail || released
+          ? { ax: next.ball.x, ay: next.ball.y, az: next.ball.z, at: nowT, bx: next.ball.x, by: next.ball.y, bz: next.ball.z, bt: nowT }
+          : { ax: ballTrail.bx, ay: ballTrail.by, az: ballTrail.bz, at: ballTrail.bt, bx: next.ball.x, by: next.ball.y, bz: next.ball.z, bt: nowT }
+        if (released) {
+          ballShown.x = next.ball.x
+          ballShown.y = next.ball.y
+          ballShown.z = next.ball.z
+        }
       }
       const me = next.players.find((p) => p.id === meId)
       if (!me) return

@@ -208,16 +208,14 @@ export function createHub(db) {
     live.done = true
     const settled = settlePlayers(live.match)
     touchFriendPlay(db, settled.filter((p) => !p.bot).map((p) => p.id))
-    if (live.match.ranked) {
-      persistResult(db, {
-        mode: live.match.mode,
-        minutes: live.match.minutes,
-        score: live.match.score,
-        players: settled,
-      })
-      if (live.match.homeClubId && live.match.awayClubId) {
-        recordClubMatch(db, live.match.homeClubId, live.match.awayClubId, live.match.score)
-      }
+    persistResult(db, {
+      mode: live.match.mode,
+      minutes: live.match.minutes,
+      score: live.match.score,
+      players: settled,
+    })
+    if (live.match.ranked && live.match.homeClubId && live.match.awayClubId) {
+      recordClubMatch(db, live.match.homeClubId, live.match.awayClubId, live.match.score)
     }
     const payload = {
       t: 'end',
@@ -636,6 +634,30 @@ export function createHub(db) {
       const live = matches.get(conn.matchId)
       if (!live) return
       setInput(live.match, conn.user.id, msg)
+      return
+    }
+    if (msg.t === 'hook-score' && process.env.ALLOW_TEST_HOOKS === '1' && conn.matchId) {
+      const live = matches.get(conn.matchId)
+      if (!live || live.done) return
+      const match = live.match
+      const me = match.players.find((p) => p.id === String(conn.user.id))
+      if (!me) return
+      match.phase = 'play'
+      const sign = me.team === 'A' ? 1 : -1
+      const hl = match.length / 2
+      match.ball.owner = null
+      match.ball.x = 0
+      match.ball.y = 0.08
+      match.ball.z = sign * (hl - 0.03)
+      match.ball.vx = 0
+      match.ball.vy = 0
+      match.ball.vz = sign * 8
+      match.ball.lastTouch = { id: me.id, team: me.team, t: match.elapsed }
+      if (msg.assist) {
+        const mate = match.players.find((p) => p.team === me.team && p.id !== me.id)
+        if (mate) match.ball.lastPass = { id: mate.id, team: mate.team, t: match.elapsed }
+      }
+      step(match, 1 / 30)
       return
     }
     if (msg.t === 'hook-end' && process.env.ALLOW_TEST_HOOKS === '1' && conn.matchId) {
