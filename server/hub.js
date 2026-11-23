@@ -29,8 +29,8 @@ export function createHub(db) {
     send(conn.ws, { t: 'error', message })
   }
 
-  function fresh(id) {
-    const user = getUserById(db, id)
+  async function fresh(id) {
+    const user = await getUserById(db, id)
     if (!user) return null
     return {
       id: user.id,
@@ -127,15 +127,18 @@ export function createHub(db) {
     return mode === '3v3' && goalies !== false && goalies !== 0
   }
 
-  function beginMatch(humanConns, opts) {
+  async function beginMatch(humanConns, opts) {
     const { mode, minutes, clubName, clubLogo, fill, difficulty, botMatch } = opts
     const goaliesOn = useGoalies(mode, opts.goalies)
     const need = MODES[mode].players
-    const humans = humanConns.map((conn) => ({
-      ...fresh(conn.user.id),
-      wantGoalie: goaliesOn && !!conn.wantGoalie,
-      side: opts.sides ? opts.sides.get(conn.user.id) : null,
-    }))
+    const humans = []
+    for (const conn of humanConns) {
+      humans.push({
+        ...(await fresh(conn.user.id)),
+        wantGoalie: goaliesOn && !!conn.wantGoalie,
+        side: opts.sides ? opts.sides.get(conn.user.id) : null,
+      })
+    }
     let bots = []
     let teams
     if (opts.sides) {
@@ -203,19 +206,19 @@ export function createHub(db) {
     return live
   }
 
-  function finish(live) {
+  async function finish(live) {
     if (live.done) return
     live.done = true
     const settled = settlePlayers(live.match)
-    touchFriendPlay(db, settled.filter((p) => !p.bot).map((p) => p.id))
-    persistResult(db, {
+    await touchFriendPlay(db, settled.filter((p) => !p.bot).map((p) => p.id))
+    await persistResult(db, {
       mode: live.match.mode,
       minutes: live.match.minutes,
       score: live.match.score,
       players: settled,
     })
     if (live.match.ranked && live.match.homeClubId && live.match.awayClubId) {
-      recordClubMatch(db, live.match.homeClubId, live.match.awayClubId, live.match.score)
+      await recordClubMatch(db, live.match.homeClubId, live.match.awayClubId, live.match.score)
     }
     const payload = {
       t: 'end',
@@ -252,7 +255,7 @@ export function createHub(db) {
   }
 
   let netTick = 0
-  function tick() {
+  async function tick() {
     netTick++
     const sendSnap = netTick % 3 === 0
     for (const [key, list] of queues) {
@@ -264,7 +267,7 @@ export function createHub(db) {
       if (list.length < need && waited < 8000) continue
       const taken = list.splice(0, Math.min(need, list.length))
       for (const c of taken) c.queue = null
-      beginMatch(taken, {
+      await beginMatch(taken, {
         mode,
         minutes: Number(minutes),
         fill: true,
@@ -282,11 +285,11 @@ export function createHub(db) {
         if (extra) ws.send(extra)
         if (snap) ws.send(snap)
       }
-      if (live.match.over) finish(live)
+      if (live.match.over) await finish(live)
     }
   }
 
-  function onMessage(conn, msg) {
+  async function onMessage(conn, msg) {
     if (!msg || typeof msg !== 'object') return
     if (msg.t === 'quick' || msg.t === 'queue') {
       if (msg.t === 'quick') {
@@ -325,7 +328,7 @@ export function createHub(db) {
         const taken = list.splice(0, MODES[mode].players)
         queues.set(key, list)
         for (const c of taken) c.queue = null
-        beginMatch(taken, { mode, minutes, fill: false, goalies: key.endsWith(':1') })
+        await beginMatch(taken, { mode, minutes, fill: false, goalies: key.endsWith(':1') })
         broadcastQueue(key)
       }
       return
@@ -345,7 +348,7 @@ export function createHub(db) {
       leaveQueue(conn)
       leaveRoom(conn)
       conn.wantGoalie = !!msg.goalie && useGoalies(mode, msg.goalies)
-      const live = beginMatch([conn], {
+      const live = await beginMatch([conn], {
         mode,
         minutes,
         fill: true,
@@ -363,17 +366,17 @@ export function createHub(db) {
       if (conn.matchId) return fail(conn, 'You are already in a match.')
       leaveQueue(conn)
       leaveRoom(conn)
-      const user = getUserById(db, conn.user.id)
+      const user = await getUserById(db, conn.user.id)
       let club = null
       if (msg.clubOnly) {
         if (!user.club_id) return fail(conn, 'Join a club before hosting a club match.')
-        club = db.prepare('SELECT * FROM clubs WHERE id = ?').get(user.club_id)
-        if (!club || !membership(db, user.id, club.id)) return fail(conn, 'Join a club before hosting a club match.')
+        club = await db.prepare('SELECT * FROM clubs WHERE id = ?').get(user.club_id)
+        if (!club || !await membership(db, user.id, club.id)) return fail(conn, 'Join a club before hosting a club match.')
         const open = [...rooms.values()].find((r) => r.clubId === club.id && !r.versus && !r.started)
         if (open) {
           conn.roomCode = open.code
           if (!open.players.some((p) => p.id === user.id)) {
-            open.players.push({ ...fresh(user.id), wantGoalie: false, ready: false })
+            open.players.push({ ...(await fresh(user.id)), wantGoalie: false, ready: false })
           }
           sendRoom(open)
           return
@@ -381,7 +384,7 @@ export function createHub(db) {
       }
       let code = randomCode()
       for (let i = 0; i < 8 && rooms.has(code); i++) code = randomCode()
-      const me = fresh(user.id)
+      const me = await fresh(user.id)
       const room = {
         code,
         mode,
@@ -413,10 +416,10 @@ export function createHub(db) {
         return
       }
       if (room.players.length >= MODES[room.mode].players) return fail(conn, 'That room is full.')
-      const user = getUserById(db, conn.user.id)
+      const user = await getUserById(db, conn.user.id)
       if (room.versus) {
-        const home = membership(db, user.id, room.clubId)
-        const away = membership(db, user.id, room.awayClubId)
+        const home = await membership(db, user.id, room.clubId)
+        const away = await membership(db, user.id, room.awayClubId)
         if (!home && !away) return fail(conn, 'This match is only for the two clubs.')
         let side
         if (away?.role === 'owner') side = 'B'
@@ -435,7 +438,7 @@ export function createHub(db) {
         leaveQueue(conn)
         leaveRoom(conn)
         room.players.push({
-          ...fresh(user.id),
+          ...(await fresh(user.id)),
           wantGoalie: !!conn.wantGoalie && room.goalies !== false,
           ready: false,
           side,
@@ -444,10 +447,10 @@ export function createHub(db) {
         sendRoom(room)
         return
       }
-      if (room.clubId && !membership(db, user.id, room.clubId)) return fail(conn, 'This match is only for members of that club.')
+      if (room.clubId && !await membership(db, user.id, room.clubId)) return fail(conn, 'This match is only for members of that club.')
       leaveQueue(conn)
       leaveRoom(conn)
-      room.players.push({ ...fresh(user.id), wantGoalie: !!conn.wantGoalie && room.goalies !== false, ready: false })
+      room.players.push({ ...(await fresh(user.id)), wantGoalie: !!conn.wantGoalie && room.goalies !== false, ready: false })
       room.invites = room.invites.filter((invite) => invite.id !== user.id)
       conn.roomCode = code
       sendRoom(room)
@@ -495,7 +498,7 @@ export function createHub(db) {
       const room = rooms.get(conn.roomCode)
       if (!room || room.hostId !== conn.user.id) return fail(conn, 'Only the host can invite.')
       if (!room.clubId) return fail(conn, 'Invites are for club matches. Turn on Club match when you create the room.')
-      const members = db.prepare(`SELECT u.id, u.username FROM memberships m
+      const members = await db.prepare(`SELECT u.id, u.username FROM memberships m
         JOIN users u ON u.id = m.user_id
         WHERE m.club_id = ? AND COALESCE(u.is_bot, 0) = 0`).all(room.clubId)
       const ids = [...new Set((msg.ids || []).map((id) => Number(id)))]
@@ -504,7 +507,7 @@ export function createHub(db) {
       const chosen = ids.map((id) => members.find((m) => m.id === id))
       for (const member of chosen) {
         const others = chosen.filter((item) => item.id !== member.id).map((item) => item.username)
-        const note = createNotification(db, {
+        const note = await createNotification(db, {
           userId: member.id,
           kind: 'match_invite',
           body: `${conn.user.username} invited you to a match for ${room.clubName}`,
@@ -555,7 +558,7 @@ export function createHub(db) {
         conns.push(c)
       }
       const sides = room.versus ? new Map(room.players.map((p) => [p.id, p.side || 'A'])) : null
-      const live = beginMatch(conns, {
+      const live = await beginMatch(conns, {
         mode: room.mode,
         minutes: room.minutes,
         clubName: room.versus ? null : room.clubName,
@@ -613,8 +616,8 @@ export function createHub(db) {
       return
     }
     if (msg.t === 'club-lobby') {
-      const user = getUserById(db, conn.user.id)
-      if (!user?.club_id || !membership(db, user.id, user.club_id)) return
+      const user = await getUserById(db, conn.user.id)
+      if (!user?.club_id || !await membership(db, user.id, user.club_id)) return
       const room = [...rooms.values()].find((r) => r.clubId === user.club_id && !r.versus && !r.started)
       if (!room) return
       if (room.players.some((p) => p.id === user.id)) {
@@ -625,7 +628,7 @@ export function createHub(db) {
       if (room.players.length >= MODES[room.mode].players) return
       leaveQueue(conn)
       leaveRoom(conn)
-      room.players.push({ ...fresh(user.id), wantGoalie: false, ready: false })
+      room.players.push({ ...(await fresh(user.id)), wantGoalie: false, ready: false })
       conn.roomCode = room.code
       sendRoom(room)
       return
@@ -705,7 +708,10 @@ export function createHub(db) {
     ws.on('message', (buf) => {
       let msg
       try { msg = JSON.parse(String(buf)) } catch { return }
-      onMessage(conn, msg)
+      onMessage(conn, msg).catch((err) => {
+        console.error(err)
+        fail(conn, 'Something went wrong.')
+      })
     })
     ws.on('close', () => {
       if (!conn.alive) return
@@ -727,10 +733,10 @@ export function createHub(db) {
     })
   }
 
-  function openChallenge({ fromClub, toClub, ownerId, mode, minutes, goalies }) {
+  async function openChallenge({ fromClub, toClub, ownerId, mode, minutes, goalies }) {
     let code = randomCode()
     for (let i = 0; i < 8 && rooms.has(code); i++) code = randomCode()
-    const owner = fresh(ownerId)
+    const owner = await fresh(ownerId)
     const room = {
       code,
       mode,

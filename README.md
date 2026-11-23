@@ -27,6 +27,17 @@ Friends on the same Wi-Fi can open `http://THAT-MAC-IP:8741`. Find the IP in Sys
 
 Accounts are saved in `data/league.sqlite` in this folder. Older save files still open. New club lists and ranks are added the first time the game starts.
 
+## Free hosting on Render + Neon
+
+The Mac app keeps using SQLite. A host sets `DATABASE_URL` to a Neon **pooled** connection string and the same tables are created in Postgres. `NOTICE.md` stays with the game: the meshes are CC BY-NC-SA 4.0 and this project is non-commercial.
+
+1. Create a Neon project and copy the **pooled** connection string (`-pooler` in the host).
+2. In Render, new **Web Service** from this repo. `render.yaml` already says: name `microduck-soccer`, free plan, Node, build `npm install`, start `npm start`, health check `/healthz`, `NODE_VERSION=22`.
+3. Set `DATABASE_URL` to that pooled string. Render asks for it because the blueprint marks it `sync: false`.
+4. To copy an existing Mac save: `DATABASE_URL='postgres://…' npm run migrate-sqlite-to-pg`. Running it again does not duplicate rows.
+
+The server listens on `PORT` and `0.0.0.0`. The page uses `wss://` when it is opened with `https://`.
+
 A 3v3 can be played with goalies or without. When the goalie has the ball, a power bar slides in the scoreboard. Press Enter on a laptop, or Stop on a phone, to kick with that power. One account can own up to 8 clubs and join as many as it likes. The club owner sets the match, members press Ready, and owners can challenge another club. Ranks lists the top clubs and the top players, and it always shows your own place. Computer ducks are not on the ranks.
 
 ## Play on your computer

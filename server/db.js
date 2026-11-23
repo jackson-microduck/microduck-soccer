@@ -3,7 +3,7 @@ import path from 'path'
 import { DatabaseSync } from 'node:sqlite'
 import { rankFor } from '../public/shared/game.js'
 
-const SCHEMA = `
+export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY,
   username TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -174,11 +174,11 @@ export function openDatabase(file) {
   return wrapDatabase(db)
 }
 
-export function publicUser(db, user) {
+export async function publicUser(db, user) {
   if (!user) return null
   let club = null
   if (user.club_id) {
-    const row = db.prepare('SELECT id, name, logo FROM clubs WHERE id = ?').get(user.club_id)
+    const row = await db.prepare('SELECT id, name, logo FROM clubs WHERE id = ?').get(user.club_id)
     if (row) club = { id: row.id, name: row.name, logo: row.logo || null }
   }
   return {
@@ -197,37 +197,37 @@ export function publicUser(db, user) {
   }
 }
 
-export function getUserById(db, id) {
-  return db.prepare('SELECT * FROM users WHERE id = ?').get(id) || null
+export async function getUserById(db, id) {
+  return (await db.prepare('SELECT * FROM users WHERE id = ?').get(id)) || null
 }
 
-export function getUserByName(db, username) {
-  return db.prepare('SELECT * FROM users WHERE username = ? COLLATE NOCASE').get(username) || null
+export async function getUserByName(db, username) {
+  return (await db.prepare('SELECT * FROM users WHERE username = ? COLLATE NOCASE').get(username)) || null
 }
 
-export function searchUsers(db, q, limit = 30) {
+export async function searchUsers(db, q, limit = 30) {
   const query = String(q || '').trim().slice(0, 16).replace(/[%_]/g, '')
   let rows
   let total
   const human = 'COALESCE(is_bot, 0) = 0'
   if (!query) {
-    total = db.prepare(`SELECT COUNT(*) AS n FROM users WHERE ${human}`).get().n
-    rows = db.prepare(`SELECT * FROM users WHERE ${human} ORDER BY username COLLATE NOCASE LIMIT ?`).all(limit)
+    total = (await db.prepare(`SELECT COUNT(*) AS n FROM users WHERE ${human}`).get()).n
+    rows = await db.prepare(`SELECT * FROM users WHERE ${human} ORDER BY username COLLATE NOCASE LIMIT ?`).all(limit)
   } else {
-    total = db.prepare(`SELECT COUNT(*) AS n FROM users WHERE ${human} AND username LIKE ? COLLATE NOCASE`).get(`%${query}%`).n
-    rows = db.prepare(`SELECT * FROM users WHERE ${human} AND username LIKE ? COLLATE NOCASE ORDER BY username COLLATE NOCASE LIMIT ?`).all(`%${query}%`, limit)
+    total = (await db.prepare(`SELECT COUNT(*) AS n FROM users WHERE ${human} AND username LIKE ? COLLATE NOCASE`).get(`%${query}%`)).n
+    rows = await db.prepare(`SELECT * FROM users WHERE ${human} AND username LIKE ? COLLATE NOCASE ORDER BY username COLLATE NOCASE LIMIT ?`).all(`%${query}%`, limit)
   }
-  return { total, players: rows.map((row) => publicUser(db, row)) }
+  return { total, players: await Promise.all(rows.map((row) => publicUser(db, row))) }
 }
 
-export function clubSummary(db, clubId) {
-  const club = db.prepare('SELECT * FROM clubs WHERE id = ?').get(clubId)
+export async function clubSummary(db, clubId) {
+  const club = await db.prepare('SELECT * FROM clubs WHERE id = ?').get(clubId)
   if (!club) return null
-  const members = db.prepare(`SELECT u.* FROM memberships m
+  const members = await db.prepare(`SELECT u.* FROM memberships m
     JOIN users u ON u.id = m.user_id
     WHERE m.club_id = ? AND COALESCE(u.is_bot, 0) = 0
     ORDER BY u.rating DESC, u.goals DESC, u.username COLLATE NOCASE`).all(clubId)
-  const owner = members.find((m) => m.id === club.owner_id) || getUserById(db, club.owner_id)
+  const owner = members.find((m) => m.id === club.owner_id) || await getUserById(db, club.owner_id)
   return {
     id: club.id,
     name: club.name,
@@ -242,7 +242,7 @@ export function clubSummary(db, clubId) {
       wins: members.reduce((s, m) => s + m.wins, 0),
       matches: members.reduce((s, m) => s + m.matches_played, 0),
     },
-    members: members.map((m) => publicUser(db, m)),
+    members: await Promise.all(members.map((m) => publicUser(db, m))),
     record: {
       wins: club.wins || 0,
       losses: club.losses || 0,
@@ -253,16 +253,16 @@ export function clubSummary(db, clubId) {
   }
 }
 
-export function membership(db, userId, clubId) {
-  return db.prepare('SELECT role FROM memberships WHERE user_id = ? AND club_id = ?').get(userId, clubId) || null
+export async function membership(db, userId, clubId) {
+  return (await db.prepare('SELECT role FROM memberships WHERE user_id = ? AND club_id = ?').get(userId, clubId)) || null
 }
 
-export function ownedCount(db, userId) {
-  return db.prepare(`SELECT COUNT(*) AS n FROM memberships WHERE user_id = ? AND role = 'owner'`).get(userId).n
+export async function ownedCount(db, userId) {
+  return (await db.prepare(`SELECT COUNT(*) AS n FROM memberships WHERE user_id = ? AND role = 'owner'`).get(userId)).n
 }
 
-export function myClubs(db, userId) {
-  const rows = db.prepare(`SELECT c.id, c.name, c.logo, m.role
+export async function myClubs(db, userId) {
+  const rows = await db.prepare(`SELECT c.id, c.name, c.logo, m.role
     FROM memberships m JOIN clubs c ON c.id = m.club_id
     WHERE m.user_id = ?
     ORDER BY c.name COLLATE NOCASE`).all(userId)
@@ -273,12 +273,12 @@ export function myClubs(db, userId) {
   }
 }
 
-export function setActiveClub(db, userId, clubId) {
-  db.prepare('UPDATE users SET club_id = ? WHERE id = ?').run(clubId, userId)
+export async function setActiveClub(db, userId, clubId) {
+  await db.prepare('UPDATE users SET club_id = ? WHERE id = ?').run(clubId, userId)
 }
 
-export function addMembership(db, userId, clubId, role) {
-  db.prepare('INSERT OR IGNORE INTO memberships (user_id, club_id, role) VALUES (?, ?, ?)').run(userId, clubId, role)
+export async function addMembership(db, userId, clubId, role) {
+  await db.prepare('INSERT OR IGNORE INTO memberships (user_id, club_id, role) VALUES (?, ?, ?)').run(userId, clubId, role)
 }
 
 function clubBetter(a, b) {
@@ -307,8 +307,8 @@ function presentClubRank(row, rank) {
   }
 }
 
-export function leaderboards(db, userId) {
-  const humans = db.prepare(`SELECT id, username, rating, goals, assists, wins, losses, draws
+export async function leaderboards(db, userId) {
+  const humans = await db.prepare(`SELECT id, username, rating, goals, assists, wins, losses, draws
     FROM users WHERE COALESCE(is_bot, 0) = 0
     ORDER BY rating DESC, goals DESC, wins DESC, username COLLATE NOCASE`).all()
   const me = humans.find((row) => row.id === userId) || null
@@ -324,9 +324,9 @@ export function leaderboards(db, userId) {
     losses: row.losses,
     draws: row.draws,
   }))
-  const clubs = db.prepare('SELECT * FROM clubs').all().sort((a, b) => (clubBetter(a, b) ? -1 : clubBetter(b, a) ? 1 : 0))
+  const clubs = (await db.prepare('SELECT * FROM clubs').all()).sort((a, b) => (clubBetter(a, b) ? -1 : clubBetter(b, a) ? 1 : 0))
   const topClubs = clubs.slice(0, 10).map((row, index) => presentClubRank(row, index + 1))
-  const mine = myClubs(db, userId)
+  const mine = await myClubs(db, userId)
   const mineIds = new Set([...mine.owned, ...mine.joined].map((club) => club.id))
   const yourClubs = clubs
     .map((row, index) => ({ row, rank: index + 1 }))
@@ -350,7 +350,7 @@ export function leaderboards(db, userId) {
   }
 }
 
-export function recordClubMatch(db, homeId, awayId, score) {
+export async function recordClubMatch(db, homeId, awayId, score) {
   const homeGoals = score.A | 0
   const awayGoals = score.B | 0
   const apply = db.prepare(`UPDATE clubs SET
@@ -370,25 +370,25 @@ export function recordClubMatch(db, homeId, awayId, score) {
     ga,
     id,
   )
-  bump(homeId, home, homeGoals, awayGoals)
-  bump(awayId, away, awayGoals, homeGoals)
+  await bump(homeId, home, homeGoals, awayGoals)
+  await bump(awayId, away, awayGoals, homeGoals)
 }
 
-export function createNotification(db, { userId, kind, body, payload }) {
+export async function createNotification(db, { userId, kind, body, payload }) {
   const now = new Date().toISOString()
-  const info = db.prepare(
+  const info = await db.prepare(
     'INSERT INTO notifications (user_id, kind, body, payload, status, created_at) VALUES (?, ?, ?, ?, ?, ?)',
   ).run(userId, kind, body, JSON.stringify(payload), 'pending', now)
   return getNotification(db, Number(info.lastInsertRowid))
 }
 
-export function getNotification(db, id) {
-  const row = db.prepare('SELECT * FROM notifications WHERE id = ?').get(id)
+export async function getNotification(db, id) {
+  const row = await db.prepare('SELECT * FROM notifications WHERE id = ?').get(id)
   return row ? presentNote(row) : null
 }
 
-export function listNotifications(db, userId) {
-  const rows = db.prepare(
+export async function listNotifications(db, userId) {
+  const rows = await db.prepare(
     'SELECT * FROM notifications WHERE user_id = ? AND status = ? ORDER BY id DESC LIMIT 30',
   ).all(userId, 'pending')
   return rows.map(presentNote)
@@ -405,14 +405,14 @@ function presentNote(row) {
   }
 }
 
-export function setNotificationStatus(db, id, userId, status) {
-  db.prepare('UPDATE notifications SET status = ? WHERE id = ? AND user_id = ?').run(status, id, userId)
+export async function setNotificationStatus(db, id, userId, status) {
+  await db.prepare('UPDATE notifications SET status = ? WHERE id = ? AND user_id = ?').run(status, id, userId)
   return getNotification(db, id)
 }
 
-export function persistResult(db, { mode, minutes, score, players }) {
+export async function persistResult(db, { mode, minutes, score, players }) {
   const now = new Date().toISOString()
-  const info = db.prepare(
+  const info = await db.prepare(
     'INSERT INTO matches (mode, minutes, home_score, away_score, played_at) VALUES (?, ?, ?, ?, ?)',
   ).run(mode, minutes, score.A, score.B, now)
   const matchId = Number(info.lastInsertRowid)
@@ -432,8 +432,8 @@ export function persistResult(db, { mode, minutes, score, players }) {
     if (p.bot) continue
     const userId = Number(p.id)
     if (!Number.isFinite(userId)) continue
-    insert.run(matchId, userId, p.team, p.goals, p.assists, p.ratingBefore, p.delta, p.result)
-    update.run(
+    await insert.run(matchId, userId, p.team, p.goals, p.assists, p.ratingBefore, p.delta, p.result)
+    await update.run(
       p.delta,
       p.goals,
       p.assists,
@@ -446,39 +446,39 @@ export function persistResult(db, { mode, minutes, score, players }) {
   return matchId
 }
 
-export function requestFriend(db, userId, friendId) {
-  const row = db.prepare(
+export async function requestFriend(db, userId, friendId) {
+  const row = await db.prepare(
     'SELECT status, user_id, friend_id FROM friend_edges WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)',
   ).get(userId, friendId, friendId, userId)
   if (row?.status === 'accepted') return 'accepted'
   if (row?.status === 'pending') return 'pending'
   if (row) return row.status
   const now = new Date().toISOString()
-  db.prepare(
+  await db.prepare(
     'INSERT INTO friend_edges (user_id, friend_id, status, created_at, last_played) VALUES (?, ?, ?, ?, ?)',
   ).run(userId, friendId, 'pending', now, null)
   return 'new'
 }
 
-export function acceptFriend(db, userId, fromId) {
-  const edge = db.prepare('SELECT * FROM friend_edges WHERE user_id = ? AND friend_id = ? AND status = ?').get(fromId, userId, 'pending')
+export async function acceptFriend(db, userId, fromId) {
+  const edge = await db.prepare('SELECT * FROM friend_edges WHERE user_id = ? AND friend_id = ? AND status = ?').get(fromId, userId, 'pending')
   if (!edge) return false
   const now = new Date().toISOString()
-  db.prepare('UPDATE friend_edges SET status = ? WHERE user_id = ? AND friend_id = ?').run('accepted', fromId, userId)
-  db.prepare(
+  await db.prepare('UPDATE friend_edges SET status = ? WHERE user_id = ? AND friend_id = ?').run('accepted', fromId, userId)
+  await db.prepare(
     'INSERT INTO friend_edges (user_id, friend_id, status, created_at, last_played) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, friend_id) DO UPDATE SET status = excluded.status',
   ).run(userId, fromId, 'accepted', now, edge.last_played)
   return true
 }
 
-export function removeFriend(db, userId, friendId) {
-  db.prepare(
+export async function removeFriend(db, userId, friendId) {
+  await db.prepare(
     'DELETE FROM friend_edges WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)',
   ).run(userId, friendId, friendId, userId)
 }
 
-export function listFriends(db, userId) {
-  const rows = db.prepare(`
+export async function listFriends(db, userId) {
+  const rows = await db.prepare(`
     SELECT u.id AS id, u.username AS username, e.last_played AS last_played
     FROM friend_edges e
     JOIN users u ON u.id = CASE WHEN e.user_id = ? THEN e.friend_id ELSE e.user_id END
@@ -495,7 +495,7 @@ export function listFriends(db, userId) {
   return [...map.values()].sort((a, b) => String(b.lastPlayed || '').localeCompare(String(a.lastPlayed || '')))
 }
 
-export function touchFriendPlay(db, ids) {
+export async function touchFriendPlay(db, ids) {
   const humans = [...new Set(ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))]
   if (humans.length < 2) return
   const now = new Date().toISOString()
@@ -503,12 +503,12 @@ export function touchFriendPlay(db, ids) {
     'UPDATE friend_edges SET last_played = ? WHERE status = ? AND ((user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?))',
   )
   for (let i = 0; i < humans.length; i++) {
-    for (let j = i + 1; j < humans.length; j++) upd.run(now, 'accepted', humans[i], humans[j], humans[j], humans[i])
+    for (let j = i + 1; j < humans.length; j++) await upd.run(now, 'accepted', humans[i], humans[j], humans[j], humans[i])
   }
 }
 
-export function recentNames(db, userId) {
-  return db.prepare(`
+export async function recentNames(db, userId) {
+  return (await db.prepare(`
     SELECT u.username AS username, MAX(mp.match_id) AS mid
     FROM match_players mine
     JOIN match_players mp ON mp.match_id = mine.match_id AND mp.user_id != mine.user_id
@@ -517,17 +517,17 @@ export function recentNames(db, userId) {
     GROUP BY u.username
     ORDER BY mid DESC
     LIMIT 8
-  `).all(userId).map((row) => row.username)
+  `).all(userId)).map((row) => row.username)
 }
 
-export function addReport(db, { reporterId, kind, targetName, reason, body }) {
+export async function addReport(db, { reporterId, kind, targetName, reason, body }) {
   const now = new Date().toISOString()
-  db.prepare(
+  await db.prepare(
     'INSERT INTO reports (reporter_id, kind, target_name, reason, body, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
   ).run(reporterId, kind, targetName || '', reason || '', body, 'open', now)
 }
 
-export function listReports(db) {
+export async function listReports(db) {
   return db.prepare(`
     SELECT r.id, r.kind, r.target_name AS targetName, r.reason, r.body, r.status, r.created_at AS createdAt, u.username AS reporter
     FROM reports r JOIN users u ON u.id = r.reporter_id

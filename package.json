@@ -5,14 +5,16 @@
   "type": "module",
   "description": "Non-commercial multiplayer Microduck soccer.",
   "engines": {
-    "node": ">=22.5"
+    "node": ">=22"
   },
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning server/index.js",
-    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js",
+    "migrate-sqlite-to-pg": "node --disable-warning=ExperimentalWarning scripts/migrate-sqlite-to-pg.js"
   },
   "dependencies": {
     "express": "^4.21.2",
+    "pg": "^8.23.1",
     "three": "^0.170.0",
     "ws": "^8.18.0"
   }
