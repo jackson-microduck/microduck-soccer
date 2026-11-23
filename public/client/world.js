@@ -506,7 +506,25 @@ export async function createWorld(canvas) {
     const h = canvas.clientHeight || 1
     renderer.setSize(w, h, false)
     camera.aspect = w / h
+    const coarse = matchMedia('(pointer: coarse)').matches
+    camera.fov = coarse && w > h ? 64 : 52
     camera.updateProjectionMatrix()
+  }
+
+  function crosshairPoint() {
+    camera.updateMatrixWorld()
+    const dir = new THREE.Vector3()
+    camera.getWorldDirection(dir)
+    const origin = camera.position
+    const planeY = 0.09
+    if (dir.y < -0.02) {
+      const t = (planeY - origin.y) / dir.y
+      if (t > 0.15 && t < 28) {
+        return { x: origin.x + dir.x * t, z: origin.z + dir.z * t }
+      }
+    }
+    const flat = Math.hypot(dir.x, dir.z) || 1
+    return { x: origin.x + (dir.x / flat) * 8, z: origin.z + (dir.z / flat) * 8 }
   }
 
   function ensureField(spec) {
@@ -698,6 +716,7 @@ export async function createWorld(canvas) {
 
   return {
     get aimYaw() { return aimYaw },
+    crosshairPoint,
     resize,
     setDemo() {
       mode = 'demo'

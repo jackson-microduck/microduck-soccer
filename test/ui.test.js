@@ -213,8 +213,8 @@ test('headless browser clicks signup, club logos, and a bot match', { timeout: 9
     })()`)
     assert.equal(phoneOn.hidden, true, JSON.stringify(phoneOn))
     assert.equal(phoneOn.phone, true, JSON.stringify(phoneOn))
-    assert.notEqual(phoneOn.stick, 'none', JSON.stringify(phoneOn))
-    assert.match(phoneOn.pad, /Sprint/)
+    assert.equal(phoneOn.stick, 'none', JSON.stringify(phoneOn))
+    assert.doesNotMatch(phoneOn.pad, /Sprint/)
     assert.match(phoneOn.pad, /Shoot|Kick|Tackle/)
     assert.match(phoneOn.pad, /Spin/)
     const joy = await evalJs(`(() => {
@@ -224,21 +224,23 @@ test('headless browser clicks signup, club logos, and a bot match', { timeout: 9
       const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
       const x = r.left + r.width / 2
       const y = r.top + 6
-      stick.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 7, pointerType: 'touch' }))
+      const host = document.getElementById('match')
+      host.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: 80, clientY: window.innerHeight - 70, pointerId: 7, pointerType: 'touch' }))
+      const shownStick = getComputedStyle(stick).display
+      window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, cancelable: true, clientX: 80, clientY: window.innerHeight - 120, pointerId: 7, pointerType: 'touch' }))
       const top = parseFloat(knob.style.top)
-      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 7, pointerType: 'touch' }))
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX: 80, clientY: window.innerHeight - 120, pointerId: 7, pointerType: 'touch' }))
       return {
         touch: document.body.classList.contains('touch'),
         shown: getComputedStyle(document.getElementById('touch')).display,
-        hit: !!(hit && hit.closest && hit.closest('#stick')),
+        hit: shownStick !== 'none',
         top,
       }
     })()`)
     assert.equal(joy.touch, true, JSON.stringify(joy))
     assert.equal(joy.shown, 'block', JSON.stringify(joy))
     assert.equal(joy.hit, true, JSON.stringify(joy))
-    assert.ok(joy.top < 70, JSON.stringify(joy))
-    assert.ok(joy.top > 12, JSON.stringify(joy))
+    assert.ok(joy.top < 24, JSON.stringify(joy))
     await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'ShiftLeft', key: 'Shift', windowsVirtualKeyCode: 16 })
     await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'KeyW', key: 'w', windowsVirtualKeyCode: 87 })
     await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'KeyK', key: 'k', windowsVirtualKeyCode: 75 })

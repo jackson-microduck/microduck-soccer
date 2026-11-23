@@ -300,6 +300,32 @@ test('a 3v3 can start with no goalies, and a goalie kick follows the power bar',
   assert.ok(shot(1) > shot(0.2) + 1)
 })
 
+test('a shot from the side still travels toward the crosshair point', () => {
+  const match = duel()
+  match.phase = 'play'
+  const ada = match.players[0]
+  ada.x = 0
+  ada.z = 0
+  ada.yaw = 0
+  ada.vx = 0
+  ada.vz = 0
+  ada.cmd.aimX = 0
+  ada.cmd.aimZ = 3
+  match.ball.owner = ada.id
+  match.ball.x = 0.28
+  match.ball.z = 0.2
+  match.ball.vx = 0
+  match.ball.vz = 0
+  ada.pressed.kick = true
+  step(match, 1 / 60)
+  const dx = ada.cmd.aimX - 0.28
+  const dz = ada.cmd.aimZ - 0.2
+  const cross = Math.abs(match.ball.vx * dz - match.ball.vz * dx)
+  const scale = Math.hypot(match.ball.vx, match.ball.vz) * Math.hypot(dx, dz)
+  assert.ok(scale > 1)
+  assert.ok(cross / scale < 0.08, `cross ${cross / scale}`)
+})
+
 test('a shot follows the aim direction instead of auto-aiming at the goal', () => {
   const match = duel()
   match.phase = 'play'

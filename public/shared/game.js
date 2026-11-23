@@ -331,6 +331,12 @@ export function setInput(match, id, msg) {
   p.cmd.spinHold = !!msg.spinHold
   const aim = Number(msg.aim)
   if (Number.isFinite(aim)) p.cmd.aim = aim
+  const aimX = Number(msg.aimX)
+  const aimZ = Number(msg.aimZ)
+  if (Number.isFinite(aimX) && Number.isFinite(aimZ)) {
+    p.cmd.aimX = aimX
+    p.cmd.aimZ = aimZ
+  }
   const power = Number(msg.power)
   if (Number.isFinite(power)) p.cmd.power = clamp(power, 0, 1)
   const sens = Number(msg.sens)
@@ -372,27 +378,32 @@ function nudgeTowardGoal(match, p) {
 
 function releaseBall(match, p, speed, lift, pass, exact) {
   const ball = match.ball
-  const yaw = exact && Number.isFinite(p.cmd.aim) ? p.cmd.aim : p.yaw
-  const s = Math.sin(yaw)
-  const c = Math.cos(yaw)
-  // Start on the camera ray. Aim at a point far along that ray so a ball that
-  // was sitting in front of the body (left of the crosshair) still converges
-  // on the crosshair instead of flying parallel to it.
-  const fromX = p.x + s * (DRIBBLE + 0.05)
-  const fromZ = p.z + c * (DRIBBLE + 0.05)
-  const tx = p.x + s * 12
-  const tz = p.z + c * 12
-  let dx = tx - fromX
-  let dz = tz - fromZ
+  let dx
+  let dz
+  const aimedPoint = exact && Number.isFinite(p.cmd.aimX) && Number.isFinite(p.cmd.aimZ)
+    && Math.hypot(p.cmd.aimX - ball.x, p.cmd.aimZ - ball.z) > 0.2
+  if (aimedPoint) {
+    dx = p.cmd.aimX - ball.x
+    dz = p.cmd.aimZ - ball.z
+  } else {
+    const yaw = exact && Number.isFinite(p.cmd.aim) ? p.cmd.aim : p.yaw
+    dx = Math.sin(yaw)
+    dz = Math.cos(yaw)
+    ball.x = p.x + dx * (DRIBBLE + 0.05)
+    ball.z = p.z + dz * (DRIBBLE + 0.05)
+  }
   const len = Math.hypot(dx, dz) || 1
   dx /= len
   dz /= len
   ball.owner = null
-  ball.x = fromX
-  ball.z = fromZ
+  if (aimedPoint) {
+    ball.x += dx * 0.05
+    ball.z += dz * 0.05
+  }
   ball.y = BALL_R + 0.02
   ball.vx = dx * speed + (exact ? 0 : p.vx * 0.25)
   ball.vz = dz * speed + (exact ? 0 : p.vz * 0.25)
+  p.yaw = Math.atan2(dx, dz)
   ball.vy = lift
   ball.grabLock = 0.32
   p.pickupLock = 0.42
@@ -456,8 +467,8 @@ function handleButtons(match, p) {
     p.animT = 0
   }
   if (p.pressed.kick && hasBall(match, p) && p.spinning <= 0) {
-    const aimed = Number.isFinite(p.cmd.aim)
-    if (aimed) p.yaw = p.cmd.aim
+    const aimed = Number.isFinite(p.cmd.aim) || (Number.isFinite(p.cmd.aimX) && Number.isFinite(p.cmd.aimZ))
+    if (Number.isFinite(p.cmd.aim)) p.yaw = p.cmd.aim
     else nudgeTowardGoal(match, p)
     let speed = KICK_SPEED
     let lift = KICK_LIFT

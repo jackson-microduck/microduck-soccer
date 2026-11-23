@@ -2,6 +2,7 @@ import { createWorld, graphicsIsLow } from './world.js'
 import { badgeDataUrl, mountLogoStudio, safeLogo } from './logo.js'
 import { playGoal, playKick, playQuack, playWhistle, unlockAudio } from './audio.js'
 import { cameraMove, rankFor } from '/shared/game.js'
+import { thumbVector } from './thumb.js'
 
 const app = document.getElementById('app')
 const matchEl = document.getElementById('match')
@@ -45,7 +46,7 @@ const keys = new Set()
 let ws
 let world
 let camYaw = 0
-let joy = { x: 0, y: 0, active: false }
+let joy = { x: 0, y: 0, active: false, sprint: false, id: null, cx: 0, cy: 0 }
 let sent = ''
 const seenNotes = new Set()
 const outbox = []
@@ -1474,6 +1475,7 @@ function showMatch() {
   maybeTips()
   document.getElementById('orient')?.classList.remove('hidden')
   syncOrient()
+  window.dispatchEvent(new Event('resize'))
   if (state.scheme === 'phone') screen.orientation?.lock?.('landscape')?.catch(() => {})
   world.resize()
 }
@@ -1645,7 +1647,6 @@ function buildPad() {
   const phone = state.scheme === 'phone'
   const buttons = phone
     ? [
-        ['sprint', 'Sprint', true],
         charging ? ['stop', 'Stop'] : hasBall ? ['kick', 'Shoot'] : ['slide', 'Tackle'],
         ['spin', 'Spin'],
         ...(me?.goalie && !hasBall ? [['dive', 'Dive']] : []),
@@ -1715,11 +1716,13 @@ function currentStick() {
     strafe += joy.x
   }
   const move = cameraMove(yaw, forward, strafe)
+  const spot = state.screen === 'match' && world ? world.crosshairPoint() : null
   return {
     mx: move.mx,
     mz: move.mz,
     aim: yaw,
-    sprint: input.sprint || keys.has('ShiftLeft') || keys.has('ShiftRight'),
+    ...(spot ? { aimX: spot.x, aimZ: spot.z } : {}),
+    sprint: input.sprint || keys.has('ShiftLeft') || keys.has('ShiftRight') || (state.scheme === 'phone' && !!joy.sprint),
     kick: input.kick,
     pass: input.pass,
     slide: input.slide,
@@ -1866,8 +1869,7 @@ function helpNode() {
   touchTitle.textContent = 'Phone and tablet'
   const touchList = document.createElement('ul')
   for (const line of [
-    'Drag the left side of the screen. A joystick appears under your thumb.',
-    'Hold Sprint. It uses the same stamina bar, and it is slower while you have the ball.',
+    'Touch the left half. A joystick appears under your thumb and hides when you let go. Push it all the way to sprint.',
     'Shoot when you have the ball, Tackle when you do not. Spin dodges. As goalie with the ball, tap Stop when the power bar is where you want it.',
     'In 3v3 the goalie gets Dive instead of an extra button piled on the screen.',
     'After a goal the pad swaps to Spin, Quack, Bob, Sit, and Glide for the scoring team. The other team waits.',
@@ -1927,71 +1929,69 @@ function setupInput() {
   })
   const stick = document.getElementById('stick')
   const knob = document.getElementById('knob')
-  const pointOf = (e) => (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e
-  const beginJoy = (e) => {
-    if (e.cancelable) e.preventDefault()
-    e.stopPropagation()
-    joy.active = true
-    if (e.pointerId != null) {
-      try { stick.setPointerCapture(e.pointerId) } catch { /* a touch event has no pointer to capture */ }
-    }
-    moveJoy(e)
-    flushInput()
-  }
-  const dragJoy = (e) => {
-    if (!joy.active) return
-    if (e.cancelable) e.preventDefault()
-    moveJoy(e)
-    flushInput()
-  }
-  const placeKnob = (nx, ny, feel) => {
-    const width = stick.getBoundingClientRect().width || stick.offsetWidth || 168
+  const placeKnob = (nx, ny, strength) => {
+    const width = stick.getBoundingClientRect().width || 96
     const max = width / 2
-    const knobSize = knob.offsetWidth || 64
-    const knobR = knobSize / 2
-    const reach = Math.max(0, max - knobR - 6) * feel
+    const knobR = (knob.offsetWidth || 40) / 2
+    const reach = Math.max(0, max - knobR - 4) * strength
     knob.style.left = `${max - knobR + nx * reach}px`
     knob.style.top = `${max - knobR + ny * reach}px`
   }
-  const end = () => {
-    if (!joy.active) return
-    joy = { x: 0, y: 0, active: false }
+  const hideStick = () => {
+    joy.x = 0
+    joy.y = 0
+    joy.sprint = false
+    stick.dataset.sprint = '0'
+    joy.active = false
+    joy.id = null
+    stick.classList.remove('live')
     placeKnob(0, 0, 0)
     flushInput()
   }
-  stick.addEventListener('pointerdown', beginJoy, { passive: false })
-  stick.addEventListener('touchstart', beginJoy, { passive: false })
-  window.addEventListener('pointermove', dragJoy, { passive: false })
-  window.addEventListener('touchmove', dragJoy, { passive: false })
-  window.addEventListener('pointerup', end)
-  window.addEventListener('pointercancel', end)
-  window.addEventListener('touchend', end)
-  window.addEventListener('touchcancel', end)
-  function moveJoy(e) {
-    const point = pointOf(e)
-    const rect = stick.getBoundingClientRect()
-    if (rect.width < 2) return
-    const dx = point.clientX - (rect.left + rect.width / 2)
-    const dy = point.clientY - (rect.top + rect.height / 2)
-    const max = rect.width / 2
-    const mag = Math.hypot(dx, dy)
-    const phone = state.scheme === 'phone'
-    const dead = max * (phone ? 0.3 : 0.16)
-    if (mag <= dead) {
-      joy.x = 0
-      joy.y = 0
-      placeKnob(0, 0, 0)
-      return
-    }
-    const nx = dx / mag
-    const ny = dy / mag
-    const strength = Math.min(1, (mag - dead) / (max - dead))
-    const sens = readSens()
-    const feel = phone ? strength * strength * sens : Math.pow(strength, 1.15 / sens)
-    joy.x = nx * feel
-    joy.y = ny * feel
-    placeKnob(nx, ny, feel)
+  const onLeftThumb = (e) => {
+    if (state.scheme !== 'phone' || state.screen !== 'match') return
+    if (e.pointerType === 'mouse') return
+    const box = matchEl.getBoundingClientRect()
+    if (e.clientX - box.left >= box.width * 0.5) return
+    if (e.target.closest && e.target.closest('#pad, button, #quick-chat, #chat-toggle, #help, .icon-btn, #power')) return
+    if (joy.active) return
+    if (e.cancelable) e.preventDefault()
+    joy.active = true
+    joy.id = e.pointerId
+    joy.cx = e.clientX
+    joy.cy = e.clientY
+    joy.x = 0
+    joy.y = 0
+    joy.sprint = false
+    const size = stick.offsetWidth || 96
+    stick.style.left = `${e.clientX - box.left - size / 2}px`
+    stick.style.top = `${e.clientY - box.top - size / 2}px`
+    stick.classList.add('live')
+    placeKnob(0, 0, 0)
+    try { matchEl.setPointerCapture(e.pointerId) } catch { /* the thumb can still move */ }
+    flushInput()
   }
+  const onThumbMove = (e) => {
+    if (!joy.active || e.pointerId !== joy.id) return
+    if (e.cancelable) e.preventDefault()
+    const radius = (stick.offsetWidth || 96) / 2
+    const next = thumbVector(e.clientX - joy.cx, e.clientY - joy.cy, radius)
+    joy.x = next.x
+    joy.y = next.y
+    joy.sprint = next.sprint
+    stick.dataset.sprint = next.sprint ? '1' : '0'
+    if (next.strength <= 0) placeKnob(0, 0, 0)
+    else placeKnob(next.x / next.strength, next.y / next.strength, next.strength)
+    flushInput()
+  }
+  const onThumbEnd = (e) => {
+    if (!joy.active || (e.pointerId != null && e.pointerId !== joy.id)) return
+    hideStick()
+  }
+  matchEl.addEventListener('pointerdown', onLeftThumb, { passive: false })
+  window.addEventListener('pointermove', onThumbMove, { passive: false })
+  window.addEventListener('pointerup', onThumbEnd)
+  window.addEventListener('pointercancel', onThumbEnd)
   matchEl.addEventListener('mousemove', (e) => {
     if (state.screen !== 'match' || state.scheme === 'phone') return
     if (!e.movementX) return
@@ -2018,17 +2018,28 @@ function setupInput() {
     input.spinHold = false
     flushInput()
   })
-  matchEl.addEventListener('touchstart', (e) => {
-    if (state.scheme !== 'phone' || state.screen !== 'match') return
-    const t = [...e.changedTouches].find((touch) => touch.clientX < window.innerWidth * 0.55)
-    if (!t || (e.target.closest && e.target.closest('#pad, button, #quick-chat'))) return
-    stick.style.left = `${t.clientX - 70}px`
-    stick.style.top = `${t.clientY - 70}px`
-  }, { passive: true })
-  window.addEventListener('resize', syncOrient)
+  const fitViewport = () => {
+    const view = window.visualViewport
+    if (!view || state.screen !== 'match') {
+      matchEl.style.height = ''
+      matchEl.style.width = ''
+      matchEl.style.top = ''
+      matchEl.style.left = ''
+      return
+    }
+    matchEl.style.top = `${view.offsetTop}px`
+    matchEl.style.left = `${view.offsetLeft}px`
+    matchEl.style.width = `${view.width}px`
+    matchEl.style.height = `${view.height}px`
+    world?.resize()
+  }
+  window.addEventListener('resize', () => { syncOrient(); fitViewport() })
+  window.visualViewport?.addEventListener('resize', fitViewport)
+  window.visualViewport?.addEventListener('scroll', fitViewport)
   window.addEventListener('orientationchange', () => {
     syncOrient()
-    setTimeout(syncOrient, 250)
+    fitViewport()
+    setTimeout(() => { syncOrient(); fitViewport() }, 250)
   })
   document.getElementById('orient-x')?.addEventListener('click', () => {
     document.getElementById('orient')?.classList.add('hidden')
