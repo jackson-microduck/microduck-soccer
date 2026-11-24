@@ -19,6 +19,55 @@ export function createHub(db) {
   const rooms = new Map()
   const queues = new Map()
   const matches = new Map()
+  const parties = new Map()
+
+  function partyView(party) {
+    return {
+      t: 'party',
+      id: party.id,
+      clubId: party.clubId || null,
+      members: [...party.members].map((id) => {
+        const mate = online.get(id)
+        return { id, name: mate?.user?.username || 'Duck', online: !!mate }
+      }),
+      chat: party.chat || [],
+    }
+  }
+
+  function sendParty(party) {
+    const view = partyView(party)
+    for (const id of party.members) {
+      const mate = online.get(id)
+      if (mate) send(mate.ws, view)
+    }
+  }
+
+  async function ensureClubParty(conn) {
+    const user = await getUserById(db, conn.user.id)
+    if (user) conn.user = user
+    if (!user?.club_id) return null
+    const id = `c${user.club_id}`
+    let party = parties.get(id)
+    if (!party) {
+      party = { id, leaderId: user.id, clubId: user.club_id, members: new Set(), chat: [] }
+      parties.set(id, party)
+    }
+    party.members.add(user.id)
+    conn.partyId = id
+    sendParty(party)
+    return party
+  }
+
+  function partyMates(conn) {
+    const party = parties.get(conn.partyId)
+    if (!party) return [conn]
+    const mates = []
+    for (const id of party.members) {
+      const mate = online.get(id)
+      if (mate && !mate.matchId) mates.push(mate)
+    }
+    return mates.length ? mates : [conn]
+  }
   let seq = 1
 
   function send(ws, obj) {
@@ -303,9 +352,14 @@ export function createHub(db) {
         const key = `${mode}:${minutes}:${goalies}:q`
         const list = queues.get(key) || []
         conn.queueAt = Date.now()
-        if (!list.includes(conn)) list.push(conn)
+        for (const mate of partyMates(conn)) {
+          if (mate.matchId) continue
+          leaveQueue(mate)
+          if (!list.includes(mate)) list.push(mate)
+          mate.queue = key
+          if (!mate.queueAt) mate.queueAt = conn.queueAt
+        }
         queues.set(key, list)
-        conn.queue = key
         broadcastQueue(key)
         return
       }
@@ -601,18 +655,110 @@ export function createHub(db) {
       if (!text) return
       if (conn.chatAt && Date.now() - conn.chatAt < 400) return
       conn.chatAt = Date.now()
-      if (conn.matchId && matches.has(conn.matchId)) {
-        const live = matches.get(conn.matchId)
-        const payload = JSON.stringify({ t: 'chat', name: conn.user.username, text })
-        for (const ws of live.sockets) if (ws.readyState === 1) ws.send(payload)
-        return
-      }
-      const room = rooms.get(conn.roomCode)
-      if (!room) return
+      const room = conn.roomCode && rooms.get(conn.roomCode)
+      if (!room || !room.clubId) return
       room.chat = room.chat || []
       room.chat.push({ name: conn.user.username, text })
       if (room.chat.length > 30) room.chat.shift()
       sendRoom(room)
+      return
+    }
+    if (msg.t === 'party-say') {
+      const text = cleanChat(msg.text)
+      if (!text) return
+      if (conn.chatAt && Date.now() - conn.chatAt < 700) return
+      conn.chatAt = Date.now()
+      const party = parties.get(conn.partyId)
+      if (!party) return fail(conn, 'Join a club or party before chatting.')
+      party.chat.push({ name: conn.user.username, text })
+      if (party.chat.length > 30) party.chat.shift()
+      sendParty(party)
+      return
+    }
+    if (msg.t === 'party-invite') {
+      const target = online.get(Number(msg.id))
+      if (!target) return fail(conn, 'They are offline.')
+      let party = conn.partyId && parties.get(conn.partyId)
+      if (!party || String(party.id).startsWith('c')) {
+        party = { id: `p${conn.user.id}`, leaderId: conn.user.id, members: new Set([conn.user.id]), chat: [] }
+        parties.set(party.id, party)
+        conn.partyId = party.id
+      }
+      const note = await createNotification(db, {
+        userId: target.user.id,
+        kind: 'party_invite',
+        body: `${conn.user.username} invited you to a party`,
+        payload: { partyId: party.id, from: conn.user.username },
+      })
+      pushNote(target.user.id, note)
+      sendParty(party)
+      return
+    }
+    if (msg.t === 'party-join') {
+      const party = parties.get(String(msg.id))
+      if (!party) return fail(conn, 'That party is gone.')
+      party.members.add(conn.user.id)
+      conn.partyId = party.id
+      sendParty(party)
+      return
+    }
+    if (msg.t === 'join-player') {
+      const target = online.get(Number(msg.id))
+      if (!target) return fail(conn, 'They are offline.')
+      if (target.roomCode && rooms.has(target.roomCode)) {
+        const room = rooms.get(target.roomCode)
+        if (!room.players.some((p) => p.id === conn.user.id)) {
+          if (room.players.length >= MODES[room.mode].players) return fail(conn, 'That room is full.')
+          leaveQueue(conn)
+          leaveRoom(conn)
+          room.players.push({ ...(await fresh(conn.user.id)), wantGoalie: false, ready: false })
+        }
+        conn.roomCode = room.code
+        sendRoom(room)
+        return
+      }
+      if (target.partyId && parties.has(target.partyId)) {
+        const party = parties.get(target.partyId)
+        party.members.add(conn.user.id)
+        conn.partyId = party.id
+        sendParty(party)
+        return
+      }
+      if (target.matchId) return fail(conn, 'That match already started.')
+      return fail(conn, 'They are not in a match or party.')
+    }
+    if (msg.t === 'invite-match') {
+      const target = online.get(Number(msg.id))
+      if (!target) return fail(conn, 'They are offline.')
+      if (!conn.roomCode || !rooms.has(conn.roomCode)) {
+        let code = randomCode()
+        for (let i = 0; i < 8 && rooms.has(code); i++) code = randomCode()
+        const me = await fresh(conn.user.id)
+        const room = {
+          code,
+          mode: '2v2',
+          minutes: 3,
+          hostId: conn.user.id,
+          practice: true,
+          goalies: false,
+          versus: false,
+          players: [{ ...me, wantGoalie: false, ready: true }],
+          invites: [],
+          chat: [],
+          started: false,
+        }
+        rooms.set(code, room)
+        conn.roomCode = code
+        sendRoom(room)
+      }
+      const room = rooms.get(conn.roomCode)
+      const note = await createNotification(db, {
+        userId: target.user.id,
+        kind: 'match_invite',
+        body: `${conn.user.username} invited you to a match`,
+        payload: { roomCode: room.code, mode: room.mode, minutes: room.minutes, others: [] },
+      })
+      pushNote(target.user.id, note)
       return
     }
     if (msg.t === 'club-lobby') {
@@ -705,6 +851,7 @@ export function createHub(db) {
       send(ws, roomView(rooms.get(conn.roomCode)))
     }
     send(ws, { t: 'ready' })
+    void ensureClubParty(conn)
     ws.on('message', (buf) => {
       let msg
       try { msg = JSON.parse(String(buf)) } catch { return }

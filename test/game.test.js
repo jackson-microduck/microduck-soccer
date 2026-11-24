@@ -2,6 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   CELEBRATION_SECONDS,
+  GOAL_H,
+  GOAL_W,
   SPRINT,
   SPRINT_BALL,
   balanceTeams,
@@ -369,4 +371,36 @@ test('rating rewards goals and assists, and teams get balanced by rank', () => {
   assert.ok(Math.abs(sum(teams.A) - sum(teams.B)) <= 200)
   assert.equal(rankFor(1000), 'Hatchling')
   assert.equal(rankFor(2100), 'Legend')
+})
+
+test('goals are 1.5x and a walk-in still scores', () => {
+  assert.equal(GOAL_W, 0.63)
+  assert.equal(GOAL_H, 0.39)
+  const match = duel()
+  match.phase = 'play'
+  const ada = match.players[0]
+  const hl = match.length / 2
+  ada.x = 0
+  ada.z = hl - 0.06
+  ada.yaw = 0
+  match.ball.owner = ada.id
+  match.ball.x = 0
+  match.ball.z = hl - 0.2
+  match.ball.y = 0.078
+  let scored = false
+  for (let i = 0; i < 8 && !scored; i++) scored = step(match, 1 / 30).some((e) => e.type === 'goal')
+  assert.equal(scored, true)
+})
+
+test('spin works without the ball', () => {
+  const match = duel()
+  match.phase = 'play'
+  const ada = match.players[0]
+  match.ball.owner = null
+  ada.pressed.spin = true
+  const before = ada.yaw
+  step(match, 1 / 30)
+  assert.ok(ada.spinning > 0.4)
+  step(match, 1 / 30)
+  assert.notEqual(ada.yaw, before)
 })

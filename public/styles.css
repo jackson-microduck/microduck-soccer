@@ -289,6 +289,50 @@ body.phone #club-line, body.phone #credit { display: none; }
   padding: 0 10px;
 }
 body.phone #leave-btn { left: calc(env(safe-area-inset-left, 0px) + 36px); }
+#view-lock, #behind {
+  position: absolute;
+  z-index: 7;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 253, 251, 0.45);
+  color: #1d2430;
+  font-weight: 800;
+  font-size: 12px;
+}
+#view-lock {
+  top: calc(max(8px, env(safe-area-inset-top)) + 46px);
+  left: calc(env(safe-area-inset-left, 0px) + 8px);
+  width: 42px;
+  height: 28px;
+}
+body.phone #view-lock { left: calc(env(safe-area-inset-left, 0px) + 36px); }
+#behind {
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
+  transform: translateX(-50%);
+  padding: 6px 12px;
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #b7c0cc;
+  display: inline-block;
+  margin-right: 6px;
+}
+.dot.on { background: #1f9d62; }
+#player-menu {
+  position: fixed;
+  z-index: 50;
+  left: 50%;
+  top: 30%;
+  transform: translateX(-50%);
+  width: min(280px, calc(100vw - 24px));
+  background: #fffdfb;
+  border-radius: 16px;
+  padding: 12px;
+  box-shadow: var(--shadow);
+}
 #banner {
   position: absolute;
   top: 22%;

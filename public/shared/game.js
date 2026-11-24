@@ -15,8 +15,8 @@ export const PLAYER_R = 0.11
 export const PICKUP_R = 0.32
 export const DRIBBLE = 0.18
 export const SPIN_GRACE = 0.28
-export const GOAL_W = 0.42
-export const GOAL_H = 0.26
+export const GOAL_W = 0.63
+export const GOAL_H = 0.39
 export const SPIN_TIME = 0.42
 export const SPIN_COOLDOWN = 2.6
 export const SLIDE_TIME = 0.36
@@ -444,8 +444,10 @@ function handleButtons(match, p) {
     return
   }
   if (p.slideT > 0 || p.diving > 0) return
-  if (p.pressed.spin && hasBall(match, p) && p.spinCd <= 0 && p.spinning <= 0) {
-    p.spinning = SPIN_TIME
+  if (p.pressed.spin && p.spinCd <= 0 && p.spinning <= 0) {
+    const free = !hasBall(match, p)
+    p.spinning = free ? 0.7 : SPIN_TIME
+    p.spinFree = free
     p.spinCd = SPIN_COOLDOWN
     p.anim = 'spin'
     p.animT = 0
@@ -517,10 +519,17 @@ export function integrateMover(p, dt, match) {
     p.vz = Math.cos(p.diveYaw) * rate
     p.sprinting = false
   } else if (p.spinning > 0) {
-    p.yaw += (Math.PI * 2) * (dt / SPIN_TIME) * (p.team === 'A' ? 1 : -1)
-    const side = p.team === 'A' ? 1 : -1
-    p.vx = Math.cos(p.yaw) * side * 1.35
-    p.vz = -Math.sin(p.yaw) * side * 1.35
+    const spins = p.spinFree ? 8 : 1
+    const span = p.spinFree ? 0.7 : SPIN_TIME
+    p.yaw += (Math.PI * 2) * spins * (dt / span) * (p.team === 'A' ? 1 : -1)
+    if (p.spinFree) {
+      p.vx *= 0.5
+      p.vz *= 0.5
+    } else {
+      const side = p.team === 'A' ? 1 : -1
+      p.vx = Math.cos(p.yaw) * side * 1.35
+      p.vz = -Math.sin(p.yaw) * side * 1.35
+    }
     p.sprinting = false
     p.stamina = Math.min(STAMINA_MAX, p.stamina + STAMINA_REGEN * dt * 0.35)
   } else if (frozen || (mx === 0 && mz === 0)) {
@@ -656,6 +665,10 @@ function integrateBall(match, dt) {
     ball.x = -hx
     ball.vx = Math.abs(ball.vx) * 0.45
   }
+  if (ball.y > 1.15) {
+    ball.y = 1.15
+    ball.vy = -Math.abs(ball.vy) * 0.35
+  }
   return prevZ
 }
 
@@ -663,17 +676,17 @@ function tryGoal(match, prevZ, events) {
   if (match.phase !== 'play') return
   const ball = match.ball
   const hl = match.length / 2
-  const forward = prevZ <= hl && ball.z > hl
-  const back = prevZ >= -hl && ball.z < -hl
+  const inMouth = Math.abs(ball.x) <= match.goalW / 2 + 0.02 && ball.y <= match.goalH + 0.04 && ball.y >= -0.02
+  const forward = ball.z > hl && (prevZ <= hl || inMouth)
+  const back = ball.z < -hl && (prevZ >= -hl || inMouth)
   if (!forward && !back) return
-  const inMouth = Math.abs(ball.x) < match.goalW / 2 - 0.015 && ball.y < match.goalH - 0.008 && ball.y >= BALL_R - 0.001
   if (!inMouth) {
-    if (forward) ball.z = hl - 0.02
+    if (ball.z > hl) ball.z = hl - 0.02
     else ball.z = -hl + 0.02
     if (!ball.owner) ball.vz *= -0.55
     return
   }
-  const scoring = forward ? 'A' : 'B'
+  const scoring = ball.z > 0 ? 'A' : 'B'
   scoreGoal(match, scoring, events)
 }
 

@@ -174,6 +174,30 @@ export async function start(opts = {}) {
     res.json({ user: user ? await publicUser(db, user) : null })
   }))
 
+  app.post('/api/me/username', route(async (req, res) => {
+    const user = await requireUser(req, res)
+    if (!user) return
+    const username = cleanUsername(req.body?.username)
+    const password = String(req.body?.password || '')
+    if (!username) return res.status(400).json({ error: 'Usernames are 3–16 characters. Letters, numbers, underscores, and single spaces are ok.' })
+    if (!verifyPassword(password, user.password_hash)) return res.status(401).json({ error: 'Current password does not match.' })
+    const taken = await getUserByName(db, username)
+    if (taken && taken.id !== user.id) return res.status(409).json({ error: 'That username is taken.' })
+    await db.prepare('UPDATE users SET username = ? WHERE id = ?').run(username, user.id)
+    res.json({ user: await publicUser(db, await getUserById(db, user.id)) })
+  }))
+
+  app.post('/api/me/password', route(async (req, res) => {
+    const user = await requireUser(req, res)
+    if (!user) return
+    const current = String(req.body?.current || '')
+    const next = String(req.body?.next || '')
+    if (!verifyPassword(current, user.password_hash)) return res.status(401).json({ error: 'Current password does not match.' })
+    if (next.length < 4 || next.length > 72) return res.status(400).json({ error: 'Use a password between 4 and 72 characters.' })
+    await db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(next), user.id)
+    res.json({ ok: true })
+  }))
+
   app.patch('/api/me', route(async (req, res) => {
     const user = await requireUser(req, res)
     if (!user) return
@@ -185,6 +209,7 @@ export async function start(opts = {}) {
   app.get('/api/players', route(async (req, res) => {
     if (!await requireUser(req, res)) return
     const data = await searchUsers(db, req.query.q, 40)
+    for (const player of data.players) player.online = hub.online.has(player.id)
     res.json(data)
   }))
 
@@ -276,8 +301,10 @@ export async function start(opts = {}) {
     const user = await requireUser(req, res)
     if (!user) return
     const lists = await myClubs(db, user.id)
+    const club = user.club_id ? await clubSummary(db, user.club_id) : null
+    if (club?.members) for (const member of club.members) member.online = hub.online.has(member.id)
     res.json({
-      club: user.club_id ? await clubSummary(db, user.club_id) : null,
+      club,
       owned: lists.owned,
       joined: lists.joined,
     })

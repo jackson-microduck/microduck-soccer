@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
-import { DRIBBLE, integrateMover } from '/shared/game.js'
+import { DRIBBLE, GOAL_H, GOAL_W, integrateMover } from '/shared/game.js'
 
 const SPIN_Q = new THREE.Quaternion()
 const BAKE_Q = new THREE.Quaternion()
@@ -221,10 +221,20 @@ function buildDuck(geoms, kin, accent, team, name, goalie, simple) {
   shadow.position.y = 0.012
   root.add(shadow)
   root.add(makeLabel(name, team, goalie))
+  const blades = new THREE.Group()
+  const bladeMat = new THREE.MeshBasicMaterial({ color: '#d7e6f5' })
+  for (const x of [-0.045, 0.045]) {
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.012, 0.09), bladeMat)
+    blade.position.set(x, 0.02, 0.02)
+    blades.add(blade)
+  }
+  blades.visible = false
+  root.add(blades)
   return {
     root,
     tilt,
     joints,
+    blades,
     apply(anim, time, yaw) {
       const posed = pose(anim, time)
       for (const [name, group] of joints) {
@@ -346,7 +356,7 @@ function buildField(length, width, goalW, goalH, simple) {
     line(0.025, boxD, boxW / 2, z)
   }
   const wallMat = surface('#f7f4ee', 0.9, simple)
-  const wallH = 0.55
+  const wallH = 0.72
   const thick = 0.08
   const hl = length / 2
   const hw = width / 2
@@ -488,6 +498,11 @@ export async function createWorld(canvas) {
   let orbit = 0
   let camYaw = 0
   let aimHold = 0
+  let lookDrag = false
+  let lookBehind = false
+  let firstPerson = false
+  let spinYaw = null
+  let driveFollow = () => false
   const trails = new Map()
   let ballTrail = null
   let dragging = false
@@ -563,7 +578,11 @@ export async function createWorld(canvas) {
     last = now
     demoT += dt
     if (mode === 'demo') {
-      ensureField({ length: 7, width: 4.2, goalW: 0.42, goalH: 0.26 })
+      if (document.hidden) {
+        requestAnimationFrame(frame)
+        return
+      }
+      ensureField({ length: 7, width: 4.2, goalW: GOAL_W, goalH: GOAL_H })
       const duck = ensureDuck({ id: 'demo', name: 'Microduck', team: 'A', color: '#ff6a1a', x: 0, z: 0, yaw: 0 })
       const anims = ['idle', 'walk', 'kick', 'spin', 'quack', 'bob', 'sit', 'glide']
       const anim = anims[Math.floor(demoT / 2.2) % anims.length]
@@ -646,6 +665,7 @@ export async function createWorld(canvas) {
         }
         duck.root.position.set(view.x, 0, view.z)
         duck.apply(p.anim || 'idle', p.animT || demoT, view.yaw)
+        if (duck.blades) duck.blades.visible = p.anim === 'spin' && snap.ball.owner !== p.id
       }
       let bx = snap.ball.x
       let by = snap.ball.y
@@ -677,13 +697,30 @@ export async function createWorld(canvas) {
       ballShadow.position.set(ball.position.x, 0.01, ball.position.z)
       const follow = me ? shown.get(me.id) : null
       const face = follow ? follow.yaw : camYaw
-      const moving = pred && Math.hypot(pred.cmd.mx || 0, pred.cmd.mz || 0) > 0.05
-      if (!moving && performance.now() - aimHold > 600) camYaw = dampAngle(camYaw, face, 10, dt)
+      const spinning = me && me.anim === 'spin'
+      if (spinning) {
+        if (spinYaw == null) spinYaw = camYaw
+        camYaw = spinYaw
+      } else {
+        spinYaw = null
+        const driving = driveFollow()
+        if (!lookDrag && driving) camYaw = dampAngle(camYaw, face, 5, dt)
+        else if (!lookDrag && !driving && performance.now() - aimHold > 600) camYaw = dampAngle(camYaw, face, 8, dt)
+      }
       aimYaw = camYaw
-      const dist = 1.35
+      const yaw = lookBehind ? camYaw + Math.PI : camYaw
+      const dist = firstPerson ? 0.02 : 1.35
+      const eye = firstPerson ? 0.34 : 0.78
       const focus = follow || { x: snap.ball.x, z: snap.ball.z }
-      camera.position.set(focus.x - Math.sin(camYaw) * dist, 0.78, focus.z - Math.cos(camYaw) * dist)
-      camera.lookAt(focus.x + Math.sin(camYaw) * 0.35, 0.14, focus.z + Math.cos(camYaw) * 0.35)
+      camera.position.set(focus.x - Math.sin(yaw) * dist, eye, focus.z - Math.cos(yaw) * dist)
+      camera.lookAt(focus.x + Math.sin(yaw) * 1.2, firstPerson ? 0.3 : 0.14, focus.z + Math.cos(yaw) * 1.2)
+      if (snap.field) {
+        const hw = snap.field.width / 2 - 0.2
+        const hl = snap.field.length / 2 - 0.2
+        camera.position.x = Math.max(-hw, Math.min(hw, camera.position.x))
+        camera.position.z = Math.max(-hl, Math.min(hl, camera.position.z))
+        camera.position.y = Math.max(0.22, Math.min(1.25, camera.position.y))
+      }
     }
     for (let i = sparks.length - 1; i >= 0; i--) {
       const s = sparks[i]
@@ -720,6 +757,7 @@ export async function createWorld(canvas) {
     resize,
     setDemo() {
       mode = 'demo'
+      renderer.setPixelRatio(1)
       snap = null
       pred = null
       for (const [id, duck] of ducks) {
@@ -731,6 +769,7 @@ export async function createWorld(canvas) {
     },
     setMatch(nextId) {
       mode = 'match'
+      renderer.setPixelRatio(pixelCap(simple))
       meId = String(nextId)
       pred = null
       orbit = 0
@@ -801,6 +840,10 @@ export async function createWorld(canvas) {
     },
     setInputSource(fn) { inputSource = fn },
     addAim(delta) { camYaw += delta; aimHold = performance.now() },
+    setLookDrag(on) { lookDrag = !!on; if (on) aimHold = performance.now() },
+    setBehind(on) { lookBehind = !!on },
+    setFirstPerson(on) { firstPerson = !!on },
+    setDriveFollow(fn) { driveFollow = fn },
     celebrate(at) {
       const count = phoneScreen() ? 6 : 16
       for (let i = 0; i < count; i++) {

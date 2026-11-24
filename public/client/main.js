@@ -38,6 +38,8 @@ const state = {
   joined: [],
   ranks: null,
   toast: '',
+  firstPerson: false,
+  party: null,
 }
 
 const COLORS = ['#ff6a1a', '#2f8cff', '#7bd15c', '#c084fc', '#ffb000', '#1c2430']
@@ -47,6 +49,7 @@ let ws
 let world
 let camYaw = 0
 let joy = { x: 0, y: 0, active: false, sprint: false, id: null, cx: 0, cy: 0 }
+let look = { drag: false, id: null, x: 0 }
 let sent = ''
 const seenNotes = new Set()
 const outbox = []
@@ -131,8 +134,9 @@ function onNet(msg) {
     }
     return
   }
-  if (msg.t === 'chat') {
-    pushMatchChat(msg.name, msg.text)
+  if (msg.t === 'party') {
+    state.party = msg
+    if (state.screen === 'club' || state.screen === 'home') render()
     return
   }
   if (msg.t === 'room') {
@@ -275,6 +279,7 @@ function shell() {
   else if (state.screen === 'directory') root.append(directoryCard())
   else if (state.screen === 'friends') root.append(friendsCard())
   else if (state.screen === 'report') root.append(reportCard())
+  else if (state.screen === 'settings') root.append(settingsCard())
   else if (state.screen === 'club') root.append(clubCard())
   else if (state.screen === 'ranks') root.append(ranksCard())
   else if (state.screen === 'lobby') root.append(lobbyCard())
@@ -461,6 +466,7 @@ function homeCard() {
     button('Ranks', 'ghost', () => { state.screen = 'ranks'; loadRanks(); render() }),
     button('Find players', 'ghost', () => { state.screen = 'directory'; loadDirectory(); render() }),
     button('Report', 'ghost', () => { state.screen = 'report'; loadReportNames(); render() }),
+    button('Account', 'ghost', () => { state.screen = 'settings'; render() }),
     button('Controls', 'ghost', () => openHelp(hero)),
   )
   hero.append(slot, actions)
@@ -500,6 +506,89 @@ function homeCard() {
   for (const note of state.notes) notes.append(noteCard(note))
   wrap.append(hero, season, club, notes)
   return wrap
+}
+
+function onlineDot(on) {
+  const dot = document.createElement('span')
+  dot.className = on ? 'dot on' : 'dot'
+  return dot
+}
+
+function openPlayer(player) {
+  if (!player || player.id === state.me?.id) return
+  let pop = document.getElementById('player-menu')
+  if (!pop) {
+    pop = document.createElement('div')
+    pop.id = 'player-menu'
+    document.body.append(pop)
+  }
+  pop.replaceChildren()
+  const title = document.createElement('b')
+  title.append(onlineDot(player.online), document.createTextNode(player.username))
+  pop.append(
+    title,
+    button('Join', 'primary', () => { send({ t: 'join-player', id: player.id }); pop.remove() }),
+    button('Invite to match', 'ghost', () => { send({ t: 'invite-match', id: player.id }); pop.remove() }),
+    button('Invite to party', 'ghost', () => { send({ t: 'party-invite', id: player.id }); pop.remove() }),
+    button('Close', 'ghost', () => pop.remove()),
+  )
+}
+
+function partyChat() {
+  const wrap = document.createElement('div')
+  wrap.className = 'chat-box'
+  wrap.append(h('h3', 'Club party chat'))
+  const log = document.createElement('div')
+  log.className = 'chat-log'
+  for (const line of state.party?.chat || []) {
+    const row = document.createElement('div')
+    const who = document.createElement('b')
+    who.textContent = line.name
+    row.append(who, document.createTextNode(` ${line.text}`))
+    log.append(row)
+  }
+  if (!log.childNodes.length) log.append(p('Say something to your club.', 'muted'))
+  const inputEl = document.createElement('input')
+  inputEl.maxLength = 80
+  inputEl.placeholder = 'Party chat'
+  inputEl.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return
+    const text = inputEl.value.trim()
+    if (!text) return
+    send({ t: 'party-say', text })
+    inputEl.value = ''
+  })
+  wrap.append(log, inputEl)
+  return wrap
+}
+
+function settingsCard() {
+  const box = card()
+  box.append(h('h2', 'Account'))
+  box.append(p('Your stats, clubs, and friends stay on this account. Usernames stay unique.'))
+  const name = document.createElement('input')
+  name.maxLength = 16
+  name.value = state.me.username
+  const pass = document.createElement('input')
+  pass.type = 'password'
+  pass.placeholder = 'Current password'
+  const next = document.createElement('input')
+  next.type = 'password'
+  next.placeholder = 'New password'
+  box.append(name, pass, button('Save username', 'primary', async () => {
+    try {
+      const data = await api('/api/me/username', { username: name.value, password: pass.value })
+      state.me = data.user
+      toast('Username saved')
+    } catch (err) { toast(err.message) }
+  }), next, button('Save password', 'ghost', async () => {
+    try {
+      await api('/api/me/password', { current: pass.value, next: next.value })
+      next.value = ''
+      toast('Password saved')
+    } catch (err) { toast(err.message) }
+  }))
+  return box
 }
 
 function stat(n, label) {
@@ -555,6 +644,8 @@ function noteCard(note) {
     extra.textContent = 'Challenge update'
   } else if (note.kind === 'friend_request') {
     extra.textContent = 'Friend request. Accept to add them to your friends list.'
+  } else if (note.kind === 'party_invite') {
+    extra.textContent = 'Party invite. Accept to join their party.'
   } else extra.textContent = 'Club invite'
   text.append(extra)
   const actions = document.createElement('div')
@@ -567,6 +658,11 @@ function noteCard(note) {
 }
 
 async function acceptNote(note) {
+  if (note.kind === 'party_invite') {
+    send({ t: 'party-join', id: note.payload.partyId })
+    api(`/api/notifications/${note.id}/respond`, { action: 'accept' }).then(refreshNotes).catch(() => {})
+    return
+  }
   if (note.kind === 'match_invite' || note.kind === 'club_match') {
     if (note.kind === 'match_invite') state.pendingNote = note
     else api(`/api/notifications/${note.id}/respond`, { action: 'accept' }).then(refreshNotes).catch(() => {})
@@ -660,17 +756,13 @@ function personButton(player) {
   const text = document.createElement('div')
   text.className = 'grow'
   const name = document.createElement('b')
-  name.textContent = player.username
+  name.append(onlineDot(player.online), document.createTextNode(player.username))
   const meta = document.createElement('div')
   meta.className = 'muted'
   meta.textContent = `${player.rank} · ${player.rating} · ${player.goals} goals · ${player.club ? player.club.name : 'No club'}`
   text.append(name, meta)
   node.append(text)
-  node.addEventListener('click', async () => {
-    const data = await api(`/api/players/${encodeURIComponent(player.username)}`)
-    state.profile = data.player
-    render()
-  })
+  node.addEventListener('click', () => openPlayer(player))
   return node
 }
 
@@ -827,7 +919,8 @@ function clubCard() {
     const info = document.createElement('div')
     info.className = 'grow'
     const name = document.createElement('b')
-    name.textContent = member.username
+    name.append(onlineDot(member.online), document.createTextNode(member.username))
+    row.addEventListener('click', () => openPlayer({ id: member.id, username: member.username, online: member.online }))
     const meta = document.createElement('div')
     meta.className = 'muted'
     meta.textContent = `${member.rank} · ${member.rating} · ${member.goals}G ${member.assists}A · ${member.wins}-${member.losses}`
@@ -835,7 +928,7 @@ function clubCard() {
     row.append(place, info)
     list.append(row)
   })
-  box.append(list)
+  box.append(list, partyChat())
   if (state.club.ownerId === state.me.id) {
     box.append(h('h3', 'Add a player'))
     const who = document.createElement('input')
@@ -975,7 +1068,8 @@ function paintFriends(list) {
     const row = document.createElement('div')
     row.className = 'member'
     const name = document.createElement('b')
-    name.textContent = friend.username
+    name.append(onlineDot(friend.online), document.createTextNode(friend.username))
+    name.addEventListener('click', () => openPlayer(friend))
     const meta = document.createElement('span')
     meta.className = 'muted'
     const when = friend.lastPlayed ? `Played ${friend.lastPlayed.slice(0, 16).replace('T', ' ')}` : 'No match together yet'
@@ -1471,7 +1565,6 @@ function showMatch() {
   matchEl.prepend(stage)
   syncTouch()
   buildPad()
-  buildQuickChat()
   maybeTips()
   document.getElementById('orient')?.classList.remove('hidden')
   syncOrient()
@@ -1912,6 +2005,7 @@ function setupInput() {
     if (e.code === 'KeyJ') input.pass += 1
     if (e.code === 'KeyC' || e.code === 'KeyE') input.slide += 1
     if (e.code === 'KeyP') input.spin += 1
+    if (e.code === 'KeyR') world?.setBehind(true)
     if (e.code === 'KeyG') input.dive += 1
     const emotes = { Digit1: 'spin', Digit2: 'quack', Digit3: 'bob', Digit4: 'sit', Digit5: 'glide' }
     if (emotes[e.code]) {
@@ -1925,6 +2019,7 @@ function setupInput() {
   window.addEventListener('keyup', (e) => {
     keys.delete(e.code)
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') input.sprint = keys.has('ShiftLeft') || keys.has('ShiftRight')
+    if (e.code === 'KeyR') world?.setBehind(false)
     flushInput()
   })
   const stick = document.getElementById('stick')
@@ -1968,7 +2063,6 @@ function setupInput() {
     stick.style.top = `${e.clientY - box.top - size / 2}px`
     stick.classList.add('live')
     placeKnob(0, 0, 0)
-    try { matchEl.setPointerCapture(e.pointerId) } catch { /* the thumb can still move */ }
     flushInput()
   }
   const onThumbMove = (e) => {
@@ -1988,7 +2082,35 @@ function setupInput() {
     if (!joy.active || (e.pointerId != null && e.pointerId !== joy.id)) return
     hideStick()
   }
+  const onRightLook = (e) => {
+    if (state.scheme !== 'phone' || state.screen !== 'match') return
+    if (e.pointerType === 'mouse') return
+    const box = matchEl.getBoundingClientRect()
+    if (e.clientX - box.left < box.width * 0.5) return
+    if (e.target.closest && e.target.closest('#pad, button, #quick-chat, #chat-toggle, #help, .icon-btn, #power, #behind, #view-lock')) return
+    if (look.drag) return
+    if (e.cancelable) e.preventDefault()
+    look.drag = true
+    look.id = e.pointerId
+    look.x = e.clientX
+    world?.setLookDrag(true)
+  }
+  const onLookMove = (e) => {
+    if (!look.drag || e.pointerId !== look.id) return
+    world?.addAim(-(e.clientX - look.x) * 0.005)
+    look.x = e.clientX
+  }
+  const onLookEnd = (e) => {
+    if (!look.drag || e.pointerId !== look.id) return
+    look.drag = false
+    look.id = null
+    world?.setLookDrag(false)
+  }
   matchEl.addEventListener('pointerdown', onLeftThumb, { passive: false })
+  matchEl.addEventListener('pointerdown', onRightLook, { passive: false })
+  window.addEventListener('pointermove', onLookMove, { passive: false })
+  window.addEventListener('pointerup', onLookEnd)
+  window.addEventListener('pointercancel', onLookEnd)
   window.addEventListener('pointermove', onThumbMove, { passive: false })
   window.addEventListener('pointerup', onThumbEnd)
   window.addEventListener('pointercancel', onThumbEnd)
@@ -2044,6 +2166,19 @@ function setupInput() {
   document.getElementById('orient-x')?.addEventListener('click', () => {
     document.getElementById('orient')?.classList.add('hidden')
   })
+  document.getElementById('view-lock').addEventListener('click', () => {
+    state.firstPerson = !state.firstPerson
+    localStorage.setItem('md-view', state.firstPerson ? '1' : '0')
+    world?.setFirstPerson(state.firstPerson)
+    document.getElementById('view-lock').textContent = state.firstPerson ? '1st' : '3rd'
+  })
+  const behind = document.getElementById('behind')
+  const behindOn = (e) => { e.preventDefault(); world?.setBehind(true) }
+  const behindOff = () => world?.setBehind(false)
+  behind.addEventListener('pointerdown', behindOn)
+  behind.addEventListener('pointerup', behindOff)
+  behind.addEventListener('pointercancel', behindOff)
+  behind.addEventListener('pointerleave', behindOff)
   document.getElementById('help-btn').addEventListener('click', () => openHelp(null))
   document.getElementById('leave-btn').addEventListener('click', () => {
     send({ t: 'leave' })
@@ -2053,7 +2188,11 @@ function setupInput() {
     render()
   })
   helpEl.addEventListener('click', (e) => { if (e.target === helpEl) helpEl.classList.add('hidden') })
-  setInterval(() => { paintPower(); flushInput() }, 50)
+  setInterval(() => {
+    if (state.screen !== 'match') return
+    paintPower()
+    flushInput()
+  }, 50)
   window.addEventListener('resize', syncTouch)
   window.addEventListener('pointerdown', () => unlockAudio(), { once: true })
 }
@@ -2077,6 +2216,11 @@ async function boot() {
   try {
     world = await createWorld(canvas)
     world.setInputSource(() => currentStick())
+    world.setDriveFollow(() => state.scheme === 'phone' && joy.active && !look.drag)
+    state.firstPerson = localStorage.getItem('md-view') === '1'
+    world.setFirstPerson(state.firstPerson)
+    const lock = document.getElementById('view-lock')
+    if (lock) lock.textContent = state.firstPerson ? '1st' : '3rd'
   } catch (err) {
     console.error(err)
   }
@@ -2098,7 +2242,7 @@ async function boot() {
     const before = JSON.stringify(state.notes)
     try { await refreshNotes() } catch { return }
     if (JSON.stringify(state.notes) !== before && (state.screen === 'home' || state.screen === 'lobby')) render()
-  }, 4000)
+  }, 12000)
 }
 
 boot()
