@@ -228,12 +228,11 @@ test('sprinting with the ball is slower and stamina drains then refills', () => 
   assert.ok(ada.stamina > 55)
 })
 
-test('goalies exist only in 3v3 and a pass can earn an assist', () => {
+test('nobody is a goalie, and a pass can earn an assist', () => {
   const small = createMatch({ mode: '2v2', minutes: 5, players: players(4).map((p, i) => ({ ...p, team: i < 2 ? 'A' : 'B' })) })
   assert.equal(small.players.some((p) => p.goalie), false)
-  const big = createMatch({ mode: '3v3', minutes: 3, players: players(6).map((p, i) => ({ ...p, team: i < 3 ? 'A' : 'B' })) })
-  assert.equal(big.players.filter((p) => p.goalie && p.team === 'A').length, 1)
-  assert.equal(big.players.filter((p) => p.goalie && p.team === 'B').length, 1)
+  const big = createMatch({ mode: '3v3', minutes: 3, players: players(6).map((p, i) => ({ ...p, team: i < 3 ? 'A' : 'B', goalie: true })) })
+  assert.equal(big.players.some((p) => p.goalie), false)
 
   const match = createMatch({
     mode: '2v2',
@@ -267,40 +266,25 @@ test('goalies exist only in 3v3 and a pass can earn an assist', () => {
   assert.equal(scorer.goals, 1)
 })
 
-test('a 3v3 can start with no goalies, and a goalie kick follows the power bar', () => {
-  const open = createMatch({
-    mode: '3v3',
+test('defenders wait at kickoff and spots rotate', () => {
+  const match = createMatch({
+    mode: '2v2',
     minutes: 3,
-    goalies: false,
-    players: players(6).map((p, i) => ({ ...p, team: i < 3 ? 'A' : 'B' })),
+    players: players(4).map((p, i) => ({ ...p, team: i < 2 ? 'A' : 'B' })),
   })
-  assert.equal(open.goalies, false)
-  assert.equal(open.players.some((p) => p.goalie), false)
-
-  function shot(power) {
-    const match = createMatch({
-      mode: '3v3',
-      minutes: 3,
-      goalies: true,
-      players: players(6).map((p, i) => ({ ...p, team: i < 3 ? 'A' : 'B' })),
-    })
-    match.phase = 'play'
-    const gk = match.players.find((p) => p.goalie && p.team === 'A')
-    for (const p of match.players) {
-      if (p !== gk) { p.x = 5; p.z = 0 }
-    }
-    gk.x = 0
-    gk.z = 0
-    gk.yaw = 0
-    gk.vx = 0
-    gk.vz = 0
-    match.ball.owner = gk.id
-    gk.cmd.power = power
-    gk.pressed.kick = true
-    step(match, 1 / 30)
-    return Math.hypot(match.ball.vx, match.ball.vz)
-  }
-  assert.ok(shot(1) > shot(0.2) + 1)
+  assert.equal(match.players.some((p) => p.goalie), false)
+  match.phase = 'play'
+  const defender = match.players.find((p) => p.team === 'B')
+  const before = defender.z
+  defender.cmd = { mx: 0, mz: 1, sprint: false }
+  step(match, 0.2)
+  assert.equal(defender.z, before)
+  defender.wait = 0
+  const ax = match.players.filter((p) => p.team === 'A').map((p) => p.x)
+  match.spotT = 19.96
+  step(match, 0.05)
+  const after = match.players.filter((p) => p.team === 'A').map((p) => p.x)
+  assert.notDeepEqual(after, ax)
 })
 
 test('a shot from the side still travels toward the crosshair point', () => {
@@ -370,8 +354,11 @@ test('rating rewards goals and assists, and teams get balanced by rank', () => {
   ])
   const sum = (list) => list.reduce((s, p) => s + p.rating, 0)
   assert.ok(Math.abs(sum(teams.A) - sum(teams.B)) <= 200)
-  assert.equal(rankFor(1000), 'Hatchling')
-  assert.equal(rankFor(2100), 'Legend')
+  assert.equal(rankFor(0), 'Hatchling')
+  assert.equal(rankFor(19), 'Hatchling')
+  assert.equal(rankFor(20), 'Duckling')
+  assert.equal(rankFor(50), 'Fledgling')
+  assert.equal(rankFor(100), 'Drake')
   const ten = balanceTeams(Array.from({ length: 10 }, (_, i) => ({ id: String(i), rating: 2000 - i })))
   assert.equal(ten.A.length, 5)
   assert.equal(ten.B.length, 5)
@@ -389,8 +376,8 @@ test('rating rewards goals and assists, and teams get balanced by rank', () => {
     })),
   })
   const sideA = five.players.filter((p) => p.team === 'A')
-  assert.equal(sideA.filter((p) => p.goalie).length, 1)
-  assert.equal(sideA.filter((p) => !p.goalie).length, 4)
+  assert.equal(sideA.filter((p) => p.goalie).length, 0)
+  assert.equal(sideA.length, 5)
 })
 
 test('goals are 1.5x and a walk-in still scores', () => {

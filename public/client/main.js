@@ -54,7 +54,7 @@ let ws
 let world
 let camYaw = 0
 let joy = { x: 0, y: 0, active: false, sprint: false, id: null, cx: 0, cy: 0 }
-let look = { drag: false, id: null, x: 0 }
+let look = { drag: false, held: false, id: null, x: 0 }
 let sent = ''
 const seenNotes = new Set()
 const outbox = []
@@ -140,21 +140,26 @@ function onNet(msg) {
     return
   }
   if (msg.t === 'party') {
-    const prev = state.party?.chat?.length || 0
-    const next = msg.chat?.length || 0
-    const last = msg.chat?.[next - 1]
-    const mine = last && (last.id === state.me?.id || last.name === state.me?.username)
-    const fresh = !state.party
-    state.party = msg
-    if (next > prev && !mine) {
-      if (state.screen === 'match' && !state.chatOpen) state.chatUnread += next - prev
-      else {
-        state.chatOpen = true
-        state.chatUnread = 0
-      }
-    } else if (fresh && next) state.chatOpen = true
+    const slot = msg.clubId ? 'clubParty' : 'party'
+    if (msg.cleared === 'club') state.clubParty = null
+    else if (!msg.clubId && !msg.id) state.party = null
+    else {
+      const prev = state[slot]?.chat?.length || 0
+      const next = msg.chat?.length || 0
+      const last = msg.chat?.[next - 1]
+      const mine = last && (last.id === state.me?.id || last.name === state.me?.username)
+      const fresh = !state[slot]
+      state[slot] = msg
+      if (next > prev && !mine) {
+        if (state.screen === 'match' && !state.chatOpen) state.chatUnread += next - prev
+        else {
+          state.chatOpen = true
+          state.chatUnread = 0
+        }
+      } else if (fresh && next) state.chatOpen = true
+    }
     paintPartyDock()
-    if (state.screen === 'club' || state.screen === 'lobby') render()
+    if (state.screen === 'party') render()
     return
   }
   if (msg.t === 'room') {
@@ -241,8 +246,10 @@ function incomingNote(note) {
     seenNotes.add(note.id)
     new Notification('Microduck League', { body: note.body })
   }
+  if (note.kind === 'party_invite') showPartyPopup(note)
   if (state.screen === 'home' || state.screen === 'lobby') render()
-  else toast(note.body)
+  else if (state.screen === 'directory') paintDirNotes()
+  else if (note.kind !== 'party_invite') toast(note.body)
 }
 
 function applyClubs(data) {
@@ -319,6 +326,8 @@ function shell() {
   if (state.screen === 'loading') root.append(card(p('Loading the pitch…')))
   else if (!state.me) root.append(authCard())
   else if (state.screen === 'directory') root.append(directoryCard())
+  else if (state.screen === 'party') root.append(partyCard())
+  else if (state.screen === 'join') root.append(joinCard())
   else if (state.screen === 'friends') root.append(friendsCard())
   else if (state.screen === 'report') root.append(reportCard())
   else if (state.screen === 'settings') root.append(settingsCard())
@@ -354,7 +363,7 @@ function topbar() {
     right.className = 'actions'
     const rank = document.createElement('span')
     rank.className = 'pill'
-    rank.textContent = `${state.me.rank} · ${state.me.rating}`
+    rank.textContent = `${state.me.rank} · ${state.me.goals}`
     const out = document.createElement('button')
     out.className = 'ghost'
     out.type = 'button'
@@ -490,19 +499,13 @@ function homeCard() {
   wrap.className = 'layout'
   const hero = card()
   hero.append(h('h2', `Hey ${state.me.username}`))
-  hero.append(p('Play a whole match against computer ducks, queue ranked, or open a private room for your club. The ball sticks when you take it. Slide to steal it. Spin to slip a tackle.'))
+  hero.append(p('Play a match against computer ducks, or open a room for your friends and club. The ball sticks when you take it. Slide to steal it. Spin to slip a tackle.'))
   const slot = document.createElement('div')
   slot.id = 'hero-slot'
   const actions = document.createElement('div')
   actions.className = 'actions home-actions'
   actions.append(
-    button('Quick Match', 'primary big', () => {
-      state.screen = 'lobby'
-      state.error = ''
-      render()
-      send({ t: 'quick', mode: '2v2', minutes: 3, goalies: true })
-    }),
-    button('Play vs bots', 'ghost', () => { state.screen = 'lobby'; state.error = ''; render() }),
+    button('Play vs bots', 'primary big', () => { state.screen = 'lobby'; state.error = ''; render() }),
     button('Club', 'ghost', () => { state.screen = 'club'; state.askedClub = 0; render() }),
     button('Friends', 'ghost', () => { state.screen = 'friends'; loadFriends(); render() }),
     button('Ranks', 'ghost', () => { state.screen = 'ranks'; loadRanks(); render() }),
@@ -510,11 +513,13 @@ function homeCard() {
     button('Report', 'ghost', () => { state.screen = 'report'; loadReportNames(); render() }),
     button('Account', 'ghost', () => { state.screen = 'settings'; render() }),
     button('Controls', 'ghost', () => openHelp(hero)),
+    button('Party', 'ghost', () => { state.screen = 'party'; loadFriends(); render() }),
+    button('Join room code', 'ghost', () => { state.screen = 'join'; render() }),
   )
   hero.append(slot, actions)
   const season = card()
   season.append(h('h3', state.me.rank))
-  season.append(p(`${state.me.rating} rating`, 'muted'))
+  season.append(p(`${state.me.goals} goals`, 'muted'))
   const stats = document.createElement('div')
   stats.className = 'stats'
   for (const [n, label] of [
@@ -618,49 +623,47 @@ function partyChat() {
   return wrap
 }
 
+function activeChat() {
+  if (state.party?.id) return state.party
+  if (state.clubParty?.id) return state.clubParty
+  return null
+}
+
 function paintPartyDock() {
   let dock = document.getElementById('party-dock')
-  if (!state.party) {
+  const chat = activeChat()
+  if (!chat) {
     dock?.remove()
     return
   }
   if (!dock) {
     dock = document.createElement('div')
     dock.id = 'party-dock'
+    dock.className = 'open'
     document.body.append(dock)
   }
-  dock.classList.toggle('open', !!state.chatOpen)
+  const keep = dock.querySelector('input')
+  const typing = keep && document.activeElement === keep
+  const draft = typing ? keep.value : ''
   dock.replaceChildren()
-  const toggle = document.createElement('button')
-  toggle.type = 'button'
-  toggle.className = 'toggle'
-  toggle.textContent = state.party.clubId ? 'Club chat' : 'Party chat'
-  if (state.chatUnread > 0) {
-    const badge = document.createElement('span')
-    badge.className = 'badge'
-    badge.textContent = String(state.chatUnread)
-    toggle.append(badge)
-  }
-  toggle.addEventListener('click', () => {
-    state.chatOpen = !state.chatOpen
-    if (state.chatOpen) state.chatUnread = 0
-    paintPartyDock()
-  })
   const panel = document.createElement('div')
   panel.className = 'panel'
+  const title = document.createElement('b')
+  title.textContent = chat.clubId ? 'Club chat' : 'Party chat'
   const log = document.createElement('div')
   log.className = 'chat-log'
-  for (const line of state.party.chat || []) {
+  for (const line of chat.chat || []) {
     const row = document.createElement('div')
     const who = document.createElement('b')
     who.textContent = shown(line.id, line.name)
     row.append(who, document.createTextNode(` ${line.text}`))
     log.append(row)
   }
-  if (!log.childNodes.length) log.append(p('No messages yet.', 'muted'))
+  if (!log.childNodes.length) log.append(p(chat.clubId ? 'Say something to your club.' : 'Say something to your party.', 'muted'))
   const inputEl = document.createElement('input')
   inputEl.maxLength = 80
-  inputEl.placeholder = 'Message the party'
+  inputEl.placeholder = chat.clubId ? 'Club chat' : 'Party chat'
+  inputEl.value = draft
   inputEl.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return
     const text = inputEl.value.trim()
@@ -668,9 +671,106 @@ function paintPartyDock() {
     send({ t: 'party-say', text })
     inputEl.value = ''
   })
-  panel.append(log, inputEl)
-  dock.append(toggle, panel)
-  if (state.chatOpen) log.scrollTop = log.scrollHeight
+  panel.append(title, log, inputEl)
+  dock.append(panel)
+  log.scrollTop = log.scrollHeight
+  if (typing) inputEl.focus()
+}
+
+function partyCard() {
+  const box = card()
+  box.append(h('h2', 'Party'))
+  const party = state.party
+  if (!party?.id) {
+    box.append(p('You are not in a party. Create one, then invite friends.'))
+    box.append(button('Create Party', 'primary', () => send({ t: 'party-create' })))
+  } else {
+    box.append(p(`${party.members?.length || 1} in the party`))
+    const list = document.createElement('div')
+    list.className = 'list'
+    for (const member of party.members || []) {
+      const row = document.createElement('div')
+      row.className = 'member'
+      const name = document.createElement('b')
+      name.append(onlineDot(member.online), document.createTextNode(shown(member.id, member.name)))
+      row.append(name)
+      list.append(row)
+    }
+    box.append(list)
+  }
+  box.append(h('h3', 'Invite friends'))
+  const friends = state.friends?.list || []
+  if (!friends.length) box.append(p('No friends yet. Add some from Find players.', 'muted'))
+  for (const friend of friends) {
+    if (party?.members?.some((member) => member.id === friend.id)) continue
+    box.append(button(`Invite ${shown(friend.id, friend.username)}`, 'ghost', () => {
+      send({ t: 'party-create' })
+      send({ t: 'party-invite', id: friend.id })
+      toast(`Invited ${friend.username}`)
+    }))
+  }
+  return box
+}
+
+function joinCard() {
+  const box = card()
+  box.append(h('h2', 'Join a room'))
+  box.append(p('Enter the room code from a friend.'))
+  const code = document.createElement('input')
+  code.maxLength = 6
+  code.placeholder = 'Room code'
+  box.append(code, button('Join', 'primary', () => {
+    const value = code.value.trim().toUpperCase()
+    if (!value) return
+    state.screen = 'lobby'
+    render()
+    send({ t: 'join', code: value })
+  }))
+  return box
+}
+
+function showPartyPopup(note) {
+  const old = document.getElementById('party-pop')
+  old?.remove()
+  const pop = document.createElement('div')
+  pop.id = 'party-pop'
+  const title = document.createElement('b')
+  title.textContent = note.body || 'Party invite'
+  const hint = document.createElement('div')
+  hint.textContent = 'Hold to accept'
+  const bar = document.createElement('span')
+  pop.append(title, hint, bar)
+  document.body.append(pop)
+  let timer = 0
+  let hold = 0
+  const dismiss = () => {
+    clearInterval(hold)
+    clearTimeout(timer)
+    pop.remove()
+  }
+  timer = setTimeout(dismiss, 10000)
+  const start = (e) => {
+    e.preventDefault()
+    const began = performance.now()
+    hold = setInterval(() => {
+      const pct = Math.min(1, (performance.now() - began) / 700)
+      bar.style.width = `${pct * 100}%`
+      if (pct >= 1) {
+        dismiss()
+        send({ t: 'party-join', id: note.payload?.partyId })
+        api(`/api/notifications/${note.id}/respond`, { action: 'accept' }).then(refreshNotes).catch(() => {})
+        toast('Joined the party')
+      }
+    }, 30)
+  }
+  const stop = () => {
+    clearInterval(hold)
+    bar.style.width = '0'
+  }
+  pop.addEventListener('pointerdown', start)
+  pop.addEventListener('pointerup', stop)
+  pop.addEventListener('pointerleave', stop)
+  pop.addEventListener('pointercancel', stop)
 }
 
 function settingsCard() {
@@ -819,22 +919,46 @@ function directoryCard() {
     state.directory.q = search.value
     loadDirectory()
   })
-  box.append(search, p(state.directory.status, 'muted'))
+  const status = p(state.directory.status, 'muted')
+  status.id = 'dir-status'
+  const notes = document.createElement('div')
+  notes.id = 'dir-notes'
   const list = document.createElement('div')
+  list.id = 'dir-list'
   list.className = 'list'
-  if (!state.directory.players.length && state.directory.status !== 'loading') {
-    list.append(p(state.directory.q ? 'No ducks with that name.' : 'No players yet.', 'muted'))
-  }
-  for (const player of state.directory.players) list.append(personButton(player))
-  box.append(list)
+  box.append(search, status, notes, list)
+  paintDirList()
+  paintDirNotes()
   if (state.profile) box.append(profilePanel(state.profile))
   return box
 }
 
 let directoryTimer
+function paintDirList() {
+  const list = document.getElementById('dir-list')
+  if (!list) return
+  const status = document.getElementById('dir-status')
+  if (status) status.textContent = state.directory.status || ''
+  list.replaceChildren()
+  if (!state.directory.players.length) {
+    list.append(p(state.directory.q ? 'No ducks with that name.' : 'No players yet.', 'muted'))
+    return
+  }
+  for (const player of state.directory.players) list.append(personButton(player))
+}
+
+function paintDirNotes() {
+  const box = document.getElementById('dir-notes')
+  if (!box) return
+  box.replaceChildren()
+  for (const note of state.notes || []) {
+    if (note.kind === 'party_invite') continue
+    box.append(noteCard(note))
+  }
+}
+
 function loadDirectory() {
   clearTimeout(directoryTimer)
-  state.directory.status = 'loading'
   directoryTimer = setTimeout(async () => {
     try {
       const data = await api(`/api/players?q=${encodeURIComponent(state.directory.q)}`)
@@ -844,19 +968,8 @@ function loadDirectory() {
     } catch (err) {
       state.directory.status = err.message
     }
-    if (state.screen === 'directory') {
-      const focused = document.activeElement?.matches?.('input[type="search"]')
-      const caret = focused ? document.activeElement.selectionStart : null
-      render()
-      if (focused) {
-        const box = document.querySelector('input[type="search"]')
-        if (box) {
-          box.focus()
-          if (caret != null) box.setSelectionRange(caret, caret)
-        }
-      }
-    }
-  }, 220)
+    if (state.screen === 'directory') paintDirList()
+  }, 140)
 }
 
 function personButton(player) {
@@ -870,7 +983,7 @@ function personButton(player) {
   name.append(onlineDot(player.online), document.createTextNode(shown(player.id, player.username)))
   const meta = document.createElement('div')
   meta.className = 'muted'
-  meta.textContent = `${player.rank} · ${player.rating} · ${player.goals} goals · ${player.club ? player.club.name : 'No club'}`
+  meta.textContent = `${player.rank} · ${player.goals} goals · ${player.club ? player.club.name : 'No club'}`
   text.append(name, meta)
   node.append(text)
   node.addEventListener('click', () => openPlayer(player))
@@ -881,7 +994,7 @@ function profilePanel(player) {
   const box = document.createElement('div')
   box.className = 'card'
   box.append(h('h3', shown(player.id, player.username)))
-  box.append(p(`${player.rank} · ${player.rating}`))
+  box.append(p(`${player.rank} · ${player.goals} goals`))
   const stats = document.createElement('div')
   stats.className = 'stats'
   for (const [n, label] of [[player.goals, 'Goals'], [player.assists, 'Assists'], [player.wins, 'Wins'], [player.losses, 'Losses'], [player.matches, 'Played']]) {
@@ -897,11 +1010,17 @@ function profilePanel(player) {
     row.append(name)
     box.append(row)
   }
-  if (player.id !== state.me.id) {
-    box.append(button('Add friend', 'ghost', async () => {
+  if (player.id !== state.me.id && player.friend !== 'accepted') {
+    const incoming = player.friend === 'incoming'
+    const waiting = player.friend === 'pending'
+    box.append(button(incoming ? 'Accept friend' : waiting ? 'Request sent' : 'Add friend', incoming ? 'primary' : 'ghost', async () => {
+      if (waiting) return
       try {
-        await api('/api/friends', { username: player.username })
-        toast(`Asked ${player.username}`)
+        const data = await api('/api/friends', { username: player.username })
+        toast(data.accepted || incoming ? `You and ${player.username} are friends` : `Asked ${player.username}`)
+        player.friend = 'accepted'
+        loadDirectory()
+        if (state.screen === 'directory') paintDirList()
       } catch (err) { toast(err.message) }
     }))
   }
@@ -1039,7 +1158,7 @@ function clubCard() {
     row.append(place, info)
     list.append(row)
   })
-  box.append(list, partyChat())
+  box.append(list)
   if (state.club.ownerId === state.me.id) {
     box.append(h('h3', 'Add a player'))
     const who = document.createElement('input')
@@ -1307,7 +1426,7 @@ function rankRow(place, title, meta, mine) {
 function ranksCard() {
   const box = card()
   box.append(h('h2', 'Ranks'))
-  box.append(p('Bots stay off both lists. Your row stays highlighted, even when you are outside the top 10. Club ranks use wins, then goal difference.'))
+  box.append(p('Rank comes from total goals and never resets. Bots stay off both lists. Club ranks still use wins, then goal difference.'))
   if (!state.ranks || state.ranks.status === 'loading') {
     box.append(p('Loading ranks…', 'muted'))
     return box
@@ -1349,15 +1468,15 @@ function ranksCard() {
   const youInList = playerRows.some((row) => row.id === state.me.id)
   for (const player of playerRows) {
     players.append(rankRow(
-      player.rank,
-      player.username,
-      `${player.rating} · ${player.goals} goals · ${player.wins} wins`,
+      player.goals,
+      `${rankFor(player.goals)} · ${player.username}`,
+      `${player.goals} goals · ${player.wins} wins`,
       player.id === state.me.id,
     ))
   }
   if (state.ranks.you && !youInList) {
     const you = state.ranks.you
-    players.append(rankRow(you.rank, `${you.username} (you)`, `${you.rating} · ${you.goals} goals · ${you.wins} wins`, true))
+    players.append(rankRow(you.goals, `${rankFor(you.goals)} · ${you.username} (you)`, `${you.goals} goals · ${you.wins} wins`, true))
   }
   box.append(players)
   return box
@@ -1375,7 +1494,7 @@ function lobbyCard() {
     return box
   }
   if (state.room) return roomCard(box)
-  box.append(p('Play vs Bots fills both teams with computer ducks and does not change your rating. Ranked queue matches people by rating. A private room can be a club match with invites.'))
+  box.append(p('Play vs Bots fills the other side with computer ducks. Every match counts. A private room can invite friends or your club. Join a room code from the home screen.'))
   box.append(h('h3', 'Mode'))
   const modes = document.createElement('div')
   modes.className = 'modes'
@@ -1397,18 +1516,6 @@ function lobbyCard() {
     b.addEventListener('click', () => { state.minutes = value; render() })
     minutes.append(b)
   }
-  const keepers = document.createElement('div')
-  keepers.className = 'modes'
-  if (state.mode === '3v3') {
-    for (const [on, label] of [[true, 'Goalies'], [false, 'No goalies']]) {
-      const b = document.createElement('button')
-      b.type = 'button'
-      b.className = `minute${state.goalies !== false === on ? ' on' : ''}`
-      b.textContent = label
-      b.addEventListener('click', () => { state.goalies = on; render() })
-      keepers.append(b)
-    }
-  }
   const levels = document.createElement('div')
   levels.className = 'modes'
   for (const level of ['easy', 'medium', 'hard']) {
@@ -1419,16 +1526,6 @@ function lobbyCard() {
     b.addEventListener('click', () => { state.difficulty = level; render() })
     levels.append(b)
   }
-  const botGoalie = document.createElement('label')
-  botGoalie.className = 'check'
-  const botGoalieInput = document.createElement('input')
-  botGoalieInput.type = 'checkbox'
-  botGoalieInput.checked = state.botGoalie && state.mode === '3v3' && state.goalies !== false
-  botGoalieInput.disabled = state.mode !== '3v3' || state.goalies === false
-  botGoalieInput.addEventListener('change', () => { state.botGoalie = botGoalieInput.checked })
-  botGoalie.append(botGoalieInput, document.createTextNode(
-    state.mode !== '3v3' ? 'Goalies are only in 3v3' : state.goalies === false ? 'This 3v3 has no goalies' : 'I will play goalie against the bots',
-  ))
   const club = document.createElement('label')
   club.className = 'check'
   const clubInput = document.createElement('input')
@@ -1443,7 +1540,7 @@ function lobbyCard() {
   practiceInput.type = 'checkbox'
   practiceInput.checked = state.practice
   practiceInput.addEventListener('change', () => { state.practice = practiceInput.checked })
-  practice.append(practiceInput, document.createTextNode('Fill empty spots with practice ducks (unranked)'))
+  practice.append(practiceInput, document.createTextNode('Fill empty spots with practice ducks. The result still counts.'))
   const sensLabel = document.createElement('label')
   sensLabel.textContent = `Sensitivity ${readSens().toFixed(2)} · saved on this device`
   const sens = document.createElement('input')
@@ -1456,24 +1553,6 @@ function lobbyCard() {
     localStorage.setItem('md-sensitivity', sens.value)
     sensLabel.textContent = `Sensitivity ${readSens().toFixed(2)} · saved on this device`
   })
-  const gfxLabel = document.createElement('div')
-  gfxLabel.className = 'muted'
-  gfxLabel.textContent = 'Graphics'
-  const gfx = document.createElement('div')
-  gfx.className = 'modes'
-  const gfxNow = localStorage.getItem('md-graphics') === 'low' || (localStorage.getItem('md-graphics') !== 'high' && graphicsIsLow())
-  for (const [id, label] of [['high', 'High'], ['low', 'Low']]) {
-    const b = document.createElement('button')
-    b.type = 'button'
-    b.className = `minute${(id === 'low') === gfxNow ? ' on' : ''}`
-    b.textContent = label
-    b.addEventListener('click', () => {
-      localStorage.setItem('md-graphics', id)
-      world?.setQuality(id === 'low')
-      render()
-    })
-    gfx.append(b)
-  }
   const err = p(state.error, 'error')
   const actions = document.createElement('div')
   actions.className = 'actions'
@@ -1484,15 +1563,8 @@ function lobbyCard() {
         mode: state.mode,
         minutes: state.minutes,
         difficulty: state.difficulty,
-        goalie: state.botGoalie && state.mode === '3v3' && state.goalies !== false,
-        goalies: state.mode === '3v3' && state.goalies !== false,
+        goalies: false,
       })
-    }),
-    button('Quick Match', 'primary', () => {
-      send({ t: 'quick', mode: state.mode, minutes: state.minutes, goalies: state.mode === '3v3' && state.goalies !== false })
-    }),
-    button('Queue ranked', 'ghost', () => {
-      send({ t: 'queue', mode: state.mode, minutes: state.minutes, goalies: state.mode === '3v3' && state.goalies !== false })
     }),
     button('Create room', 'ghost', () => {
       send({
@@ -1501,25 +1573,17 @@ function lobbyCard() {
         minutes: state.minutes,
         clubOnly: state.clubOnly && !!state.club,
         practice: state.practice,
-        goalies: state.mode === '3v3' && state.goalies !== false,
+        goalies: false,
       })
     }),
   )
-  const join = document.createElement('input')
-  join.placeholder = 'Room code'
-  join.maxLength = 6
-  box.append(modes, h('h3', 'Length'), minutes)
-  if (state.mode === '3v3') box.append(h('h3', '3v3 goalies'), keepers)
-  box.append(h('h3', 'Bot difficulty'), levels, botGoalie, club, practice, sensLabel, sens, gfxLabel, gfx, err, actions, join, button('Join code', 'ghost', () => {
-    send({ t: 'join', code: join.value.trim().toUpperCase() })
-  }))
+  box.append(modes, h('h3', 'Length'), minutes, h('h3', 'Bot difficulty'), levels, club, practice, sensLabel, sens, err, actions)
   return box
 }
 
 function roomCard(box) {
   const room = state.room
-  const keeper = room.mode === '3v3' ? (room.goalies === false ? ' · no goalies' : ' · goalies') : ''
-  box.append(h('h2', `${room.mode} · ${room.minutes} min${keeper}`))
+  box.append(h('h2', `${room.mode} · ${room.minutes} min`))
   if (room.versus) box.append(p(`Club vs club · ${room.clubName} vs ${room.awayName}`))
   else if (room.clubName) box.append(p(`Club match · ${room.clubName}`))
   const mine = room.hostId === state.me.id
@@ -1543,9 +1607,9 @@ function roomCard(box) {
     room.versus
       ? 'Both clubs ready up. The challenging owner starts when each side is full and ready.'
       : room.practice
-        ? 'Practice ducks will fill empty spots. Ranked rating stays put.'
+        ? 'Practice ducks will fill empty spots. The result still counts.'
         : clubRoom
-          ? 'Ready up, then start with 2 or more. A team can have up to 5, with a goalie when that side has 5.'
+          ? 'Ready up, then start with 2 or more. A team can have up to 5 field players.'
           : 'Start with 2 or more players. A team can have up to 5.',
   ))
   if (clubRoom && mine && !room.versus) {
@@ -1556,7 +1620,7 @@ function roomCard(box) {
       b.type = 'button'
       b.className = `mode${room.mode === mode ? ' on' : ''}`
       b.textContent = mode
-      b.addEventListener('click', () => send({ t: 'options', mode, minutes: room.minutes, goalies: mode === '3v3' && room.goalies !== false }))
+      b.addEventListener('click', () => send({ t: 'options', mode, minutes: room.minutes, goalies: false }))
       modes.append(b)
     }
     const minutes = document.createElement('div')
@@ -1566,23 +1630,10 @@ function roomCard(box) {
       b.type = 'button'
       b.className = `minute${room.minutes === value ? ' on' : ''}`
       b.textContent = `${value} min`
-      b.addEventListener('click', () => send({ t: 'options', mode: room.mode, minutes: value, goalies: room.goalies !== false }))
+      b.addEventListener('click', () => send({ t: 'options', mode: room.mode, minutes: value, goalies: false }))
       minutes.append(b)
     }
     box.append(modes, minutes)
-    if (room.mode === '3v3') {
-      const keepers = document.createElement('div')
-      keepers.className = 'modes'
-      for (const [on, label] of [[true, 'Goalies'], [false, 'No goalies']]) {
-        const b = document.createElement('button')
-        b.type = 'button'
-        b.className = `minute${(room.goalies !== false) === on ? ' on' : ''}`
-        b.textContent = label
-        b.addEventListener('click', () => send({ t: 'options', mode: room.mode, minutes: room.minutes, goalies: on }))
-        keepers.append(b)
-      }
-      box.append(keepers)
-    }
   }
   const list = document.createElement('div')
   list.className = 'list'
@@ -1590,20 +1641,15 @@ function roomCard(box) {
     const row = document.createElement('div')
     row.className = 'member'
     const name = document.createElement('b')
-    name.textContent = `${shown(player.id, player.name)}${player.id === room.hostId ? ' · host' : ''}${player.side === 'A' ? ' · home' : ''}${player.side === 'B' ? ' · away' : ''}${player.goalie ? ' · goalie' : ''}${clubRoom && player.ready ? ' · ready' : ''}`
+    name.textContent = `${shown(player.id, player.name)}${player.id === room.hostId ? ' · host' : ''}${player.side === 'A' ? ' · home' : ''}${player.side === 'B' ? ' · away' : ''}${clubRoom && player.ready ? ' · ready' : ''}`
     const meta = document.createElement('span')
     meta.className = 'muted'
-    meta.textContent = `${rankFor(player.rating)} ${player.rating}`
+    meta.textContent = `${player.rank || 'Hatchling'} · ${player.rating}`
     row.append(name, meta)
     list.append(row)
   }
   box.append(list)
   const me = room.players.find((p) => p.id === state.me.id)
-  if (room.mode === '3v3' && room.goalies !== false) {
-    box.append(button(me?.goalie ? 'Goalie spot claimed' : 'I will play goalie', 'ghost', () => {
-      send({ t: 'goalie', on: !me?.goalie })
-    }))
-  }
   if (room.clubId && mine && !room.versus) box.append(invitePicker(room))
   const actions = document.createElement('div')
   actions.className = 'actions'
@@ -1611,12 +1657,16 @@ function roomCard(box) {
     actions.append(button(me?.ready ? 'Not ready' : 'Ready', 'primary', () => send({ t: 'ready' })))
   }
   if (mine) {
-    actions.append(button('Play vs Bots', 'primary', () => send({ t: 'start', bots: 'same', difficulty: state.difficulty })))
-    actions.append(button('Play With Bots', 'ghost', () => send({ t: 'start', bots: 'mix', difficulty: state.difficulty })))
-    actions.append(button('Start match', 'primary', () => send({ t: 'start' })))
+    const versus = document.createElement('div')
+    versus.append(button('Team Up vs Bots', 'primary', () => send({ t: 'start', bots: 'same', difficulty: state.difficulty })))
+    versus.append(p('You and your friends on one team against bots.', 'muted'))
+    const mixed = document.createElement('div')
+    mixed.append(button('Friends vs Friends + Bots', 'ghost', () => send({ t: 'start', bots: 'mix', difficulty: state.difficulty })))
+    mixed.append(p('Bots fill both teams, so you play against your friends.', 'muted'))
+    actions.append(versus, mixed, button('Start match', 'primary', () => send({ t: 'start' })))
   }
   actions.append(button('Leave room', 'ghost', () => send({ t: 'leave' })))
-  box.append(chatBox(), p(state.error, 'error'), actions)
+  box.append(p(state.error, 'error'), actions)
   return box
 }
 
@@ -1899,18 +1949,16 @@ function buildPad() {
   const phone = state.scheme === 'phone'
   const buttons = phone
     ? [
-        charging ? ['stop', 'Stop'] : hasBall ? ['kick', 'Shoot'] : ['slide', 'Tackle'],
+        hasBall ? ['kick', 'Shoot'] : ['slide', 'Tackle'],
         ['spin', 'Spin'],
-        ...(me?.goalie && !hasBall ? [['dive', 'Dive']] : []),
         ...(scoring ? [['quack', 'Quack'], ['bob', 'Bob'], ['sit', 'Sit'], ['glide', 'Glide']] : []),
       ]
     : [
         ['sprint', 'Sprint', true],
         ['spin', 'Spin'],
-        charging ? ['stop', 'Stop'] : ['kick', 'Kick'],
+        ['kick', 'Kick'],
         ['slide', 'Slide'],
         ['pass', 'Pass'],
-        ...(me?.goalie ? [['dive', 'Dive']] : []),
         ...(scoring ? [['quack', 'Quack'], ['bob', 'Bob'], ['sit', 'Sit'], ['glide', 'Glide']] : []),
       ]
   const signature = JSON.stringify([frozen, scoring, buttons.map((b) => b[0])])
@@ -2239,6 +2287,7 @@ function setupInput() {
   }
   const onThumbEnd = (e) => {
     if (!joy.active || (e.pointerId != null && e.pointerId !== joy.id)) return
+    look.held = false
     hideStick()
   }
   const onRightLook = (e) => {
@@ -2250,6 +2299,7 @@ function setupInput() {
     if (look.drag) return
     if (e.cancelable) e.preventDefault()
     look.drag = true
+    look.held = true
     look.id = e.pointerId
     look.x = e.clientX
     world?.setLookDrag(true)
@@ -2375,7 +2425,7 @@ async function boot() {
   try {
     world = await createWorld(canvas)
     world.setInputSource(() => currentStick())
-    world.setDriveFollow(() => state.scheme === 'phone' && joy.active && !look.drag)
+    world.setDriveFollow(() => state.scheme === 'phone' && joy.active && !look.drag && !look.held)
     world.setNamer((id, name) => shown(id, name))
     state.firstPerson = localStorage.getItem('md-view') === '1'
     world.setFirstPerson(state.firstPerson)

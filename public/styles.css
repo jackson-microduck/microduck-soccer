@@ -293,8 +293,29 @@ body.phone #club-line, body.phone #credit { display: none; }
   line-height: 18px;
   text-align: center;
 }
-#party-dock .panel { display: none; margin-top: 8px; }
-#party-dock.open .panel { display: grid; gap: 6px; background: #fffdfb; border-radius: 16px; padding: 10px; box-shadow: var(--shadow); }
+#party-dock .panel { display: grid; gap: 6px; background: #fffdfb; border-radius: 16px; padding: 10px; box-shadow: var(--shadow); }
+#party-pop {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 60;
+  width: min(260px, calc(100vw - 24px));
+  background: #1d2430;
+  color: white;
+  border-radius: 16px;
+  padding: 12px;
+  box-shadow: 0 12px 30px rgba(0,0,0,.25);
+  user-select: none;
+  touch-action: none;
+}
+#party-pop span {
+  display: block;
+  height: 6px;
+  width: 0;
+  margin-top: 8px;
+  border-radius: 99px;
+  background: #7bd15c;
+}
 body.playing #party-dock { bottom: auto; top: 64px; right: 8px; width: min(240px, 46vw); }
 .icon-btn {
   position: absolute;

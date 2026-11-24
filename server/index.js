@@ -233,9 +233,20 @@ export async function start(opts = {}) {
   }))
 
   app.get('/api/players', route(async (req, res) => {
-    if (!await requireUser(req, res)) return
+    const user = await requireUser(req, res)
+    if (!user) return
     const data = await searchUsers(db, req.query.q, 40)
-    for (const player of data.players) player.online = hub.online.has(player.id)
+    const edges = await db.prepare('SELECT user_id, friend_id, status FROM friend_edges WHERE user_id = ? OR friend_id = ?').all(user.id, user.id)
+    const friendOf = (id) => {
+      const row = edges.find((edge) => edge.user_id === id || edge.friend_id === id)
+      if (!row || row.status !== 'accepted' && row.status !== 'pending') return 'none'
+      if (row.status === 'accepted') return 'accepted'
+      return row.user_id === user.id ? 'pending' : 'incoming'
+    }
+    for (const player of data.players) {
+      player.online = hub.online.has(player.id)
+      player.friend = friendOf(player.id)
+    }
     res.json(data)
   }))
 
@@ -265,6 +276,7 @@ export async function start(opts = {}) {
     const clubId = Number(info.lastInsertRowid)
     await addMembership(db, user.id, clubId, 'owner')
     await setActiveClub(db, user.id, clubId)
+    await hub.refreshClub(user.id)
     res.json({ club: await clubSummary(db, clubId) })
   }))
 
@@ -277,6 +289,7 @@ export async function start(opts = {}) {
     if (await membership(db, user.id, club.id)) return res.status(400).json({ error: 'You are already in that club.' })
     await addMembership(db, user.id, club.id, 'member')
     if (!user.club_id) await setActiveClub(db, user.id, club.id)
+    await hub.refreshClub(user.id)
     res.json({ club: await clubSummary(db, club.id) })
   }))
 
@@ -286,6 +299,7 @@ export async function start(opts = {}) {
     const clubId = Number(req.body?.id)
     if (!await membership(db, user.id, clubId)) return res.status(403).json({ error: 'You are not in that club.' })
     await setActiveClub(db, user.id, clubId)
+    await hub.refreshClub(user.id)
     const lists = await myClubs(db, user.id)
     res.json({ club: await clubSummary(db, clubId), owned: lists.owned, joined: lists.joined, user: await publicUser(db, await getUserById(db, user.id)) })
   }))
@@ -314,6 +328,7 @@ export async function start(opts = {}) {
     }
     const lists = await myClubs(db, user.id)
     const fresh = await getUserById(db, user.id)
+    await hub.refreshClub(user.id)
     res.json({
       ok: true,
       user: await publicUser(db, fresh),
@@ -458,6 +473,7 @@ export async function start(opts = {}) {
       if (await membership(db, user.id, club.id)) return res.status(400).json({ error: 'You are already in that club.' })
       await addMembership(db, user.id, club.id, 'member')
       if (!fresh.club_id) await setActiveClub(db, user.id, club.id)
+      await hub.refreshClub(user.id)
       await db.prepare(
         'UPDATE club_invites SET status = ? WHERE club_id = ? AND invitee_id = ? AND status = ?',
       ).run('accepted', club.id, user.id, 'pending')
@@ -556,6 +572,11 @@ export async function start(opts = {}) {
     if (target.id === user.id) return res.status(400).json({ error: 'That is you.' })
     const status = await requestFriend(db, user.id, target.id)
     if (status === 'accepted') return res.status(400).json({ error: 'You are already friends.' })
+    if (status === 'incoming') {
+      if (!await acceptFriend(db, user.id, target.id)) return res.status(400).json({ error: 'That friend request is gone.' })
+      await db.prepare(`UPDATE notifications SET status = ? WHERE user_id = ? AND kind = ? AND status = ?`).run('accepted', user.id, 'friend_request', 'pending')
+      return res.json({ ok: true, accepted: true })
+    }
     if (status === 'pending') return res.status(400).json({ error: 'That request is already waiting.' })
     if (status === 'new') {
       const note = await createNotification(db, {

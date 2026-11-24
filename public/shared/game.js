@@ -44,26 +44,15 @@ export function modeForSide(perTeam) {
   return MODE_BY_SIDE[n - 1]
 }
 
-export const RANKS = [
-  { name: 'Duckling', min: 0 },
-  { name: 'Hatchling', min: 900 },
-  { name: 'Waddler', min: 1100 },
-  { name: 'Striker', min: 1300 },
-  { name: 'Playmaker', min: 1500 },
-  { name: 'Captain', min: 1700 },
-  { name: 'All-Star', min: 1900 },
-  { name: 'Legend', min: 2100 },
-]
-
 export const EMOTES = ['spin', 'quack', 'bob', 'sit', 'glide']
 export const START_RATING = 1000
 
-export function rankFor(rating) {
-  let name = RANKS[0].name
-  for (const rank of RANKS) {
-    if (rating >= rank.min) name = rank.name
-  }
-  return name
+export function rankFor(goals) {
+  const n = Number(goals) || 0
+  if (n >= 100) return 'Drake'
+  if (n >= 50) return 'Fledgling'
+  if (n >= 20) return 'Duckling'
+  return 'Hatchling'
 }
 
 export function clamp(n, a, b) {
@@ -163,6 +152,8 @@ export function makePlayer(raw, team) {
     kickT: 0,
     goals: 0,
     assists: 0,
+    careerGoals: raw.careerGoals || 0,
+    wait: 0,
   }
 }
 
@@ -172,11 +163,11 @@ function spotsFor(match, team) {
   const hl = match.length / 2
   if (mode === '5v5') {
     return [
-      { x: 0, z: sign * (hl - 0.45), goalie: true },
-      { x: -1.35, z: sign * 1.15 },
-      { x: 1.35, z: sign * 1.15 },
-      { x: -0.55, z: sign * 2.35 },
-      { x: 0.55, z: sign * 2.35 },
+      { x: 0, z: sign * 1.1 },
+      { x: -1.35, z: sign * 1.7 },
+      { x: 1.35, z: sign * 1.7 },
+      { x: -0.55, z: sign * 2.5 },
+      { x: 0.55, z: sign * 2.5 },
     ]
   }
   if (mode === '4v4') {
@@ -185,13 +176,6 @@ function spotsFor(match, team) {
       { x: 1.15, z: sign * 1.25 },
       { x: -0.45, z: sign * 2.35 },
       { x: 0.45, z: sign * 2.35 },
-    ]
-  }
-  if (mode === '3v3' && match.goalies !== false) {
-    return [
-      { x: 0, z: sign * (hl - 0.4), goalie: true },
-      { x: -0.9, z: sign * 1.45 },
-      { x: 0.9, z: sign * 1.45 },
     ]
   }
   if (mode === '3v3') {
@@ -210,24 +194,8 @@ function spotsFor(match, team) {
   return [{ x: 0, z: sign * 1.15 }]
 }
 
-function assignGoalies(players, mode, goalies) {
-  const five = mode === '5v5'
-  if ((!five && mode !== '3v3') || (!five && goalies === false)) {
-    for (const p of players) p.goalie = false
-    return
-  }
-  for (const team of ['A', 'B']) {
-    const side = players.filter((p) => p.team === team)
-    if (five && side.length < 5) {
-      for (const p of side) p.goalie = false
-      continue
-    }
-    let keeper = side.find((p) => p.goalie)
-    if (!keeper) {
-      keeper = [...side].sort((a, b) => a.rating - b.rating)[0]
-    }
-    for (const p of side) p.goalie = p === keeper
-  }
+function assignGoalies(players) {
+  for (const p of players) p.goalie = false
 }
 
 export function createMatch({
@@ -250,9 +218,9 @@ export function createMatch({
     // minutes === 0 is rejected for real rooms. Tests pass 3 or 5.
   }
   const spec = MODES[mode]
-  const useGoalies = mode === '5v5' || (mode === '3v3' && goalies !== false)
+  const useGoalies = false
   const made = players.map((p) => makePlayer(p, p.team || 'A'))
-  assignGoalies(made, mode, useGoalies)
+  assignGoalies(made)
   const match = {
     id: String(id),
     mode,
@@ -327,6 +295,7 @@ function placeKickoff(match, team) {
       p.sprinting = false
       p.cmd = blankCommand()
       p.pressed = {}
+      p.wait = side === team ? 0 : 1.5
     })
   }
   const kickers = match.players.filter((p) => p.team === team && !p.goalie)
@@ -489,25 +458,12 @@ function handleButtons(match, p) {
     p.anim = 'slide'
     p.animT = 0
   }
-  if (p.pressed.dive && p.goalie && match.mode === '3v3' && p.diveCd <= 0 && p.spinning <= 0 && p.slideT <= 0) {
-    p.diving = 0.42
-    p.diveCd = 1.25
-    const mag = hypot(p.cmd.mx, p.cmd.mz)
-    p.diveYaw = mag > 0.2 ? Math.atan2(p.cmd.mx, p.cmd.mz) : p.yaw
-    p.anim = 'dive'
-    p.animT = 0
-  }
   if (p.pressed.kick && hasBall(match, p) && p.spinning <= 0) {
     const aimed = Number.isFinite(p.cmd.aim) || (Number.isFinite(p.cmd.aimX) && Number.isFinite(p.cmd.aimZ))
     if (Number.isFinite(p.cmd.aim)) p.yaw = p.cmd.aim
     else nudgeTowardGoal(match, p)
     let speed = KICK_SPEED
     let lift = KICK_LIFT
-    if (p.goalie && Number.isFinite(p.cmd.power)) {
-      const pow = clamp(p.cmd.power, 0.15, 1)
-      speed = KICK_SPEED * (0.42 + 0.78 * pow)
-      lift = KICK_LIFT * (0.55 + 0.7 * pow)
-    }
     releaseBall(match, p, speed, lift, false, aimed)
   } else if (p.pressed.pass && hasBall(match, p) && p.spinning <= 0) {
     const mate = aimAtTeammate(match, p)
@@ -519,6 +475,13 @@ function handleButtons(match, p) {
 }
 
 export function integrateMover(p, dt, match) {
+  if (p.wait > 0 && match && match.phase === 'play') {
+    p.wait = Math.max(0, p.wait - dt)
+    p.vx = 0
+    p.vz = 0
+    p.sprinting = false
+    return
+  }
   if (match && (match.phase === 'countdown' || match.phase === 'fulltime')) {
     p.vx = 0
     p.vz = 0
@@ -811,7 +774,7 @@ function tryPickup(match) {
 }
 
 function tryCatch(match) {
-  if (match.mode !== '3v3' || match.phase !== 'play') return
+  if (match.phase !== 'play') return
   const ball = match.ball
   if (ball.owner) return
   for (const p of match.players) {
@@ -956,6 +919,24 @@ export function step(match, dt) {
 
   match.clock = Math.max(0, match.clock - dtUse)
   match.ball.grabLock = Math.max(0, match.ball.grabLock - dtUse)
+  match.spotT = (match.spotT || 0) + dtUse
+  if (match.spotT >= 20) {
+    match.spotT = 0
+    for (const side of ['A', 'B']) {
+      const group = match.players.filter((p) => p.team === side)
+      if (group.length < 2) continue
+      const spots = group.map((p) => ({ x: p.x, z: p.z }))
+      group.forEach((p, i) => {
+        const spot = spots[(i + 1) % group.length]
+        p.x = spot.x
+        p.z = spot.z
+        p.vx = 0
+        p.vz = 0
+      })
+    }
+    const owner = match.ball.owner ? playerById(match, match.ball.owner) : null
+    if (owner) stickBall(match, owner)
+  }
 
   for (const p of match.players) {
     p.fromBuffer = false
@@ -1114,7 +1095,7 @@ export function snapshot(match, lite = false) {
     awayLogo: match.awayLogo,
     clubName: match.clubName,
     difficulty: match.difficulty || null,
-    goalies: match.goalies !== false && match.mode === '3v3',
+    goalies: false,
     field,
     ball,
     players,
@@ -1145,8 +1126,8 @@ export function settlePlayers(match) {
       ratingBefore: p.rating,
       delta,
       ratingAfter: p.rating + delta,
-      rankBefore: rankFor(p.rating),
-      rankAfter: rankFor(p.rating + delta),
+      rankBefore: rankFor(p.careerGoals || 0),
+      rankAfter: rankFor((p.careerGoals || 0) + p.goals),
       result,
       goalie: p.goalie,
     }

@@ -413,12 +413,7 @@ function buildGoal(z, goalW, goalH, sign, simple) {
 }
 
 export function graphicsIsLow() {
-  const saved = localStorage.getItem('md-graphics')
-  if (saved === 'low') return true
-  if (saved === 'high') return false
-  const coarse = matchMedia('(pointer: coarse)').matches
-  const small = Math.min(window.innerWidth || 1200, window.innerHeight || 800) < 700
-  return coarse && small
+  return false
 }
 
 function phoneScreen() {
@@ -717,7 +712,6 @@ export async function createWorld(canvas) {
         spinYaw = null
         const driving = driveFollow()
         if (!lookDrag && driving) camYaw = dampAngle(camYaw, face, 5, dt)
-        else if (!lookDrag && !driving && performance.now() - aimHold > 600) camYaw = dampAngle(camYaw, face, 8, dt)
       }
       aimYaw = camYaw
       const yaw = lookBehind ? camYaw + Math.PI : camYaw

@@ -200,7 +200,7 @@ export async function publicUser(db, user) {
     username: user.username,
     color: user.color,
     rating: user.rating,
-    rank: rankFor(user.rating),
+    rank: rankFor(user.goals),
     goals: user.goals,
     assists: user.assists,
     wins: user.wins,
@@ -324,7 +324,7 @@ function presentClubRank(row, rank) {
 export async function leaderboards(db, userId) {
   const humans = await db.prepare(`SELECT id, username, rating, goals, assists, wins, losses, draws
     FROM users WHERE COALESCE(is_bot, 0) = 0
-    ORDER BY rating DESC, goals DESC, wins DESC, username COLLATE NOCASE`).all()
+    ORDER BY goals DESC, wins DESC, rating DESC, username COLLATE NOCASE`).all()
   const me = humans.find((row) => row.id === userId) || null
   const playerRank = me ? humans.findIndex((row) => row.id === userId) + 1 : null
   const topPlayers = humans.slice(0, 10).map((row, index) => ({
@@ -465,6 +465,7 @@ export async function requestFriend(db, userId, friendId) {
     'SELECT status, user_id, friend_id FROM friend_edges WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)',
   ).get(userId, friendId, friendId, userId)
   if (row?.status === 'accepted') return 'accepted'
+  if (row?.status === 'pending' && row.user_id === friendId && row.friend_id === userId) return 'incoming'
   if (row?.status === 'pending') return 'pending'
   if (row) return row.status
   const now = new Date().toISOString()

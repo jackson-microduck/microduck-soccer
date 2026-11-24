@@ -54,10 +54,34 @@ export function createHub(db) {
       parties.set(id, party)
     }
     party.members.add(user.id)
-    conn.partyId = id
+    conn.clubPartyId = id
     party.chat = await loadChat(id)
     sendParty(party)
     return party
+  }
+
+  async function refreshClub(userId) {
+    const conn = online.get(userId)
+    if (!conn) return null
+    const user = await getUserById(db, userId)
+    if (user) conn.user = user
+    if (!user?.club_id) {
+      conn.clubPartyId = null
+      send(conn.ws, { t: 'party', id: null, clubId: null, cleared: 'club', members: [], chat: [] })
+      return null
+    }
+    return ensureClubParty(conn)
+  }
+
+  async function restoreParty(conn) {
+    for (const party of parties.values()) {
+      if (String(party.id).startsWith('c')) continue
+      if (!party.members.has(conn.user.id)) continue
+      conn.partyId = party.id
+      party.chat = await loadChat(party.id)
+      sendParty(party)
+      return
+    }
   }
 
   async function loadChat(channel) {
@@ -88,7 +112,7 @@ export function createHub(db) {
   }
 
   function partyMates(conn) {
-    const party = parties.get(conn.partyId)
+    const party = parties.get(conn.partyId) || parties.get(conn.clubPartyId)
     if (!party) return [conn]
     const mates = []
     for (const id of party.members) {
@@ -116,6 +140,7 @@ export function createHub(db) {
       rating: user.rating,
       color: user.color,
       bot: false,
+      careerGoals: user.goals || 0,
     }
   }
 
@@ -164,7 +189,7 @@ export function createHub(db) {
         name: p.name,
         rating: p.rating,
         color: p.color,
-        rank: rankFor(p.rating),
+        rank: rankFor(p.careerGoals || 0),
         goalie: !!p.wantGoalie,
         ready: !!p.ready || p.id === room.hostId,
         side: p.side || null,
@@ -275,7 +300,7 @@ export function createHub(db) {
     for (const side of ['A', 'B']) {
       for (const p of teams[side]) players.push({ ...p, team: side })
     }
-    const ranked = bots.length === 0
+    const ranked = true
     const id = `m${seq++}`
     const match = createMatch({
       id,
@@ -730,17 +755,32 @@ export function createHub(db) {
       if (!text) return
       if (conn.chatAt && Date.now() - conn.chatAt < 700) return
       conn.chatAt = Date.now()
-      const party = parties.get(conn.partyId)
+      const party = parties.get(conn.partyId) || parties.get(conn.clubPartyId)
       if (!party) return fail(conn, 'Join a club or party before chatting.')
+      if (party.clubId && conn.clubPartyId !== party.id) return fail(conn, 'Club chat is only for club members.')
+      if (!party.clubId && conn.partyId !== party.id) return fail(conn, 'Party chat is only for party members.')
       await saveChat(party.id, conn.user, text)
       party.chat = await loadChat(party.id)
       if (party.clubId) mirrorClubChat(party.id, party.chat)
       else sendParty(party)
       return
     }
+    if (msg.t === 'party-create') {
+      let party = conn.partyId && parties.get(conn.partyId)
+      if (!party) {
+        party = { id: `p${conn.user.id}`, leaderId: conn.user.id, members: new Set([conn.user.id]), chat: [] }
+        parties.set(party.id, party)
+        conn.partyId = party.id
+        party.chat = await loadChat(party.id)
+      }
+      sendParty(party)
+      return
+    }
     if (msg.t === 'party-invite') {
-      const target = online.get(Number(msg.id))
-      if (!target) return fail(conn, 'They are offline.')
+      const targetId = Number(msg.id)
+      const target = online.get(targetId)
+      const targetUser = target?.user || await getUserById(db, targetId)
+      if (!targetUser || targetUser.is_bot) return fail(conn, 'No player with that id.')
       let party = conn.partyId && parties.get(conn.partyId)
       if (!party || String(party.id).startsWith('c')) {
         party = { id: `p${conn.user.id}`, leaderId: conn.user.id, members: new Set([conn.user.id]), chat: [] }
@@ -749,12 +789,12 @@ export function createHub(db) {
         party.chat = await loadChat(party.id)
       }
       const note = await createNotification(db, {
-        userId: target.user.id,
+        userId: targetUser.id,
         kind: 'party_invite',
         body: `${conn.user.username} invited you to a party`,
         payload: { partyId: party.id, from: conn.user.username },
       })
-      pushNote(target.user.id, note)
+      pushNote(targetUser.id, note)
       sendParty(party)
       return
     }
@@ -1015,7 +1055,10 @@ export function createHub(db) {
       send(ws, roomView(rooms.get(conn.roomCode)))
     }
     send(ws, { t: 'ready' })
-    void ensureClubParty(conn)
+    void (async () => {
+      await ensureClubParty(conn)
+      await restoreParty(conn)
+    })()
     ws.on('message', (buf) => {
       let msg
       try { msg = JSON.parse(String(buf)) } catch { return }
@@ -1077,5 +1120,5 @@ export function createHub(db) {
     return room
   }
 
-  return { attach, tick, pushNote, online, rooms, openChallenge }
+  return { attach, tick, pushNote, online, rooms, openChallenge, refreshClub }
 }
