@@ -35,6 +35,14 @@ export function cleanColor(value) {
   return COLORS.has(color) ? color : '#ff6a1a'
 }
 
+export function cleanNick(value) {
+  const name = String(value || '').trim().replace(/\s+/g, ' ')
+  if (!name) return ''
+  if (name.length > 16) return null
+  if (!/^[A-Za-z0-9_]+(?: [A-Za-z0-9_]+)*$/.test(name)) return null
+  return name
+}
+
 export function cleanUsername(value) {
   const name = String(value || '').trim().replace(/\s+/g, ' ')
   if (name.length < 3 || name.length > 16) return null

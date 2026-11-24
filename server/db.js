@@ -109,6 +109,20 @@ CREATE TABLE IF NOT EXISTS match_players (
   rating_delta INTEGER NOT NULL,
   result TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id INTEGER PRIMARY KEY,
+  channel TEXT NOT NULL,
+  user_id INTEGER NOT NULL,
+  username TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS nicknames (
+  viewer_id INTEGER NOT NULL,
+  target_id INTEGER NOT NULL,
+  nick TEXT NOT NULL,
+  PRIMARY KEY (viewer_id, target_id)
+);
 `
 
 function sqlParam(value, index) {

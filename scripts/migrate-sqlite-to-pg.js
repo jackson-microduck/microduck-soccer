@@ -16,8 +16,10 @@ const tables = [
   'reports',
   'matches',
   'match_players',
+  'chat_messages',
+  'nicknames',
 ]
-const identity = ['users', 'clubs', 'challenges', 'club_invites', 'notifications', 'reports', 'matches']
+const identity = ['users', 'clubs', 'challenges', 'club_invites', 'notifications', 'reports', 'matches', 'chat_messages']
 
 const url = process.env.DATABASE_URL
 if (!url) {

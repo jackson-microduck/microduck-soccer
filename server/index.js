@@ -6,6 +6,7 @@ import { WebSocketServer } from 'ws'
 import {
   cleanColor,
   cleanChat,
+  cleanNick,
   cleanUsername,
   hashPassword,
   randomCode,
@@ -196,6 +197,31 @@ export async function start(opts = {}) {
     if (next.length < 4 || next.length > 72) return res.status(400).json({ error: 'Use a password between 4 and 72 characters.' })
     await db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(next), user.id)
     res.json({ ok: true })
+  }))
+
+  app.get('/api/nicknames', route(async (req, res) => {
+    const user = await requireUser(req, res)
+    if (!user) return
+    const rows = await db.prepare(`SELECT n.target_id AS id, u.username, n.nick
+      FROM nicknames n JOIN users u ON u.id = n.target_id
+      WHERE n.viewer_id = ? ORDER BY u.username COLLATE NOCASE`).all(user.id)
+    res.json({ nicks: rows })
+  }))
+
+  app.post('/api/nicknames', route(async (req, res) => {
+    const user = await requireUser(req, res)
+    if (!user) return
+    const nick = cleanNick(req.body?.nick)
+    if (nick == null) return res.status(400).json({ error: 'Nicknames are up to 16 letters, numbers, underscores, and single spaces.' })
+    const target = await getUserByName(db, cleanUsername(req.body?.username) || String(req.body?.username || ''))
+    if (!target || target.is_bot) return res.status(404).json({ error: 'No player with that username.' })
+    if (target.id === user.id) return res.status(400).json({ error: 'That is your own username.' })
+    await db.prepare('DELETE FROM nicknames WHERE viewer_id = ? AND target_id = ?').run(user.id, target.id)
+    if (nick) await db.prepare('INSERT INTO nicknames (viewer_id, target_id, nick) VALUES (?, ?, ?)').run(user.id, target.id, nick)
+    const rows = await db.prepare(`SELECT n.target_id AS id, u.username, n.nick
+      FROM nicknames n JOIN users u ON u.id = n.target_id
+      WHERE n.viewer_id = ?`).all(user.id)
+    res.json({ nicks: rows })
   }))
 
   app.patch('/api/me', route(async (req, res) => {

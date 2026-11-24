@@ -220,7 +220,8 @@ function buildDuck(geoms, kin, accent, team, name, goalie, simple) {
   shadow.rotation.x = -Math.PI / 2
   shadow.position.y = 0.012
   root.add(shadow)
-  root.add(makeLabel(name, team, goalie))
+  const label = makeLabel(name, team, goalie)
+  root.add(label)
   const blades = new THREE.Group()
   const bladeMat = new THREE.MeshBasicMaterial({ color: '#d7e6f5' })
   for (const x of [-0.045, 0.045]) {
@@ -235,6 +236,8 @@ function buildDuck(geoms, kin, accent, team, name, goalie, simple) {
     tilt,
     joints,
     blades,
+    label,
+    labelText: `${goalie ? 'GK ' : ''}${name}`.slice(0, 14),
     apply(anim, time, yaw) {
       const posed = pose(anim, time)
       for (const [name, group] of joints) {
@@ -503,6 +506,7 @@ export async function createWorld(canvas) {
   let firstPerson = false
   let spinYaw = null
   let driveFollow = () => false
+  let namer = (_id, name) => name
   const trails = new Map()
   let ballTrail = null
   let dragging = false
@@ -602,6 +606,7 @@ export async function createWorld(canvas) {
           scene.remove(duck.root)
           ducks.delete(id)
           shown.delete(id)
+          trails.delete(id)
         }
       }
       const me = snap.players.find((p) => p.id === meId)
@@ -635,6 +640,13 @@ export async function createWorld(canvas) {
       }
       for (const p of snap.players) {
         const duck = ensureDuck(p)
+        const label = `${p.goalie ? 'GK ' : ''}${namer(p.id, p.name || 'Duck')}`.slice(0, 14)
+        if (duck.labelText !== label) {
+          if (duck.label) duck.root.remove(duck.label)
+          duck.label = makeLabel(namer(p.id, p.name || 'Duck'), p.team || 'A', !!p.goalie)
+          duck.labelText = label
+          duck.root.add(duck.label)
+        }
         const view = shown.get(p.id)
         const mine = p.id === meId
         const usePred = mine && pred && snap.phase === 'play' && ['idle', 'walk', 'sprint'].includes(p.anim)
@@ -844,6 +856,7 @@ export async function createWorld(canvas) {
     setBehind(on) { lookBehind = !!on },
     setFirstPerson(on) { firstPerson = !!on },
     setDriveFollow(fn) { driveFollow = fn },
+    setNamer(fn) { namer = fn || ((_id, name) => name) },
     celebrate(at) {
       const count = phoneScreen() ? 6 : 16
       for (let i = 0; i < count; i++) {

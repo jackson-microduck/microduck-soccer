@@ -40,6 +40,9 @@ const state = {
   toast: '',
   firstPerson: false,
   party: null,
+  nicks: {},
+  chatOpen: false,
+  chatUnread: 0,
 }
 
 const COLORS = ['#ff6a1a', '#2f8cff', '#7bd15c', '#c084fc', '#ffb000', '#1c2430']
@@ -135,8 +138,21 @@ function onNet(msg) {
     return
   }
   if (msg.t === 'party') {
+    const prev = state.party?.chat?.length || 0
+    const next = msg.chat?.length || 0
+    const last = msg.chat?.[next - 1]
+    const mine = last && (last.id === state.me?.id || last.name === state.me?.username)
+    const fresh = !state.party
     state.party = msg
-    if (state.screen === 'club' || state.screen === 'home') render()
+    if (next > prev && !mine) {
+      if (state.screen === 'match' && !state.chatOpen) state.chatUnread += next - prev
+      else {
+        state.chatOpen = true
+        state.chatUnread = 0
+      }
+    } else if (fresh && next) state.chatOpen = true
+    paintPartyDock()
+    if (state.screen === 'club' || state.screen === 'lobby') render()
     return
   }
   if (msg.t === 'room') {
@@ -234,15 +250,39 @@ function applyClubs(data) {
   if (data.joined) state.joined = data.joined
 }
 
+function shown(id, name) {
+  const key = id != null && id !== '' ? String(id) : ''
+  if (key && state.nicks[key]) return state.nicks[key]
+  if (name) {
+    const hit = state.snap?.players?.find((p) => p.name === name)
+    if (hit && state.nicks[String(hit.id)]) return state.nicks[String(hit.id)]
+    const known = Object.keys(state.nicks).find((item) => state.nicks[`${item}:name`] === name)
+    if (known) return state.nicks[known]
+  }
+  return name || 'Duck'
+}
+
+function rememberNicks(rows) {
+  state.nicks = {}
+  for (const row of rows || []) {
+    state.nicks[String(row.id)] = row.nick
+    state.nicks[`${row.id}:name`] = row.username
+  }
+  world?.setNamer((id, name) => shown(id, name))
+}
+
 async function refreshMe() {
   const data = await api('/api/me')
   state.me = data.user
   if (state.me) {
     applyClubs(await api('/api/clubs/mine'))
+    const nicks = await api('/api/nicknames')
+    rememberNicks(nicks.nicks)
   } else {
     state.club = null
     state.owned = []
     state.joined = []
+    state.nicks = {}
   }
 }
 
@@ -524,12 +564,26 @@ function openPlayer(player) {
   }
   pop.replaceChildren()
   const title = document.createElement('b')
-  title.append(onlineDot(player.online), document.createTextNode(player.username))
+  title.append(onlineDot(player.online), document.createTextNode(shown(player.id, player.username)))
+  const nick = document.createElement('input')
+  nick.maxLength = 16
+  nick.placeholder = 'Private nickname'
+  nick.value = state.nicks[String(player.id)] || ''
   pop.append(
     title,
     button('Join', 'primary', () => { send({ t: 'join-player', id: player.id }); pop.remove() }),
     button('Invite to match', 'ghost', () => { send({ t: 'invite-match', id: player.id }); pop.remove() }),
     button('Invite to party', 'ghost', () => { send({ t: 'party-invite', id: player.id }); pop.remove() }),
+    nick,
+    button('Save nickname', 'ghost', async () => {
+      try {
+        const data = await api('/api/nicknames', { username: player.username, nick: nick.value })
+        rememberNicks(data.nicks)
+        pop.remove()
+        render()
+        toast(nick.value.trim() ? 'Nickname saved' : 'Nickname cleared')
+      } catch (err) { toast(err.message) }
+    }),
     button('Close', 'ghost', () => pop.remove()),
   )
 }
@@ -543,7 +597,7 @@ function partyChat() {
   for (const line of state.party?.chat || []) {
     const row = document.createElement('div')
     const who = document.createElement('b')
-    who.textContent = line.name
+    who.textContent = shown(line.id, line.name)
     row.append(who, document.createTextNode(` ${line.text}`))
     log.append(row)
   }
@@ -560,6 +614,61 @@ function partyChat() {
   })
   wrap.append(log, inputEl)
   return wrap
+}
+
+function paintPartyDock() {
+  let dock = document.getElementById('party-dock')
+  if (!state.party) {
+    dock?.remove()
+    return
+  }
+  if (!dock) {
+    dock = document.createElement('div')
+    dock.id = 'party-dock'
+    document.body.append(dock)
+  }
+  dock.classList.toggle('open', !!state.chatOpen)
+  dock.replaceChildren()
+  const toggle = document.createElement('button')
+  toggle.type = 'button'
+  toggle.className = 'toggle'
+  toggle.textContent = state.party.clubId ? 'Club chat' : 'Party chat'
+  if (state.chatUnread > 0) {
+    const badge = document.createElement('span')
+    badge.className = 'badge'
+    badge.textContent = String(state.chatUnread)
+    toggle.append(badge)
+  }
+  toggle.addEventListener('click', () => {
+    state.chatOpen = !state.chatOpen
+    if (state.chatOpen) state.chatUnread = 0
+    paintPartyDock()
+  })
+  const panel = document.createElement('div')
+  panel.className = 'panel'
+  const log = document.createElement('div')
+  log.className = 'chat-log'
+  for (const line of state.party.chat || []) {
+    const row = document.createElement('div')
+    const who = document.createElement('b')
+    who.textContent = shown(line.id, line.name)
+    row.append(who, document.createTextNode(` ${line.text}`))
+    log.append(row)
+  }
+  if (!log.childNodes.length) log.append(p('No messages yet.', 'muted'))
+  const inputEl = document.createElement('input')
+  inputEl.maxLength = 80
+  inputEl.placeholder = 'Message the party'
+  inputEl.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return
+    const text = inputEl.value.trim()
+    if (!text) return
+    send({ t: 'party-say', text })
+    inputEl.value = ''
+  })
+  panel.append(log, inputEl)
+  dock.append(toggle, panel)
+  if (state.chatOpen) log.scrollTop = log.scrollHeight
 }
 
 function settingsCard() {
@@ -756,7 +865,7 @@ function personButton(player) {
   const text = document.createElement('div')
   text.className = 'grow'
   const name = document.createElement('b')
-  name.append(onlineDot(player.online), document.createTextNode(player.username))
+  name.append(onlineDot(player.online), document.createTextNode(shown(player.id, player.username)))
   const meta = document.createElement('div')
   meta.className = 'muted'
   meta.textContent = `${player.rank} · ${player.rating} · ${player.goals} goals · ${player.club ? player.club.name : 'No club'}`
@@ -769,7 +878,7 @@ function personButton(player) {
 function profilePanel(player) {
   const box = document.createElement('div')
   box.className = 'card'
-  box.append(h('h3', player.username))
+  box.append(h('h3', shown(player.id, player.username)))
   box.append(p(`${player.rank} · ${player.rating}`))
   const stats = document.createElement('div')
   stats.className = 'stats'
@@ -919,7 +1028,7 @@ function clubCard() {
     const info = document.createElement('div')
     info.className = 'grow'
     const name = document.createElement('b')
-    name.append(onlineDot(member.online), document.createTextNode(member.username))
+    name.append(onlineDot(member.online), document.createTextNode(shown(member.id, member.username)))
     row.addEventListener('click', () => openPlayer({ id: member.id, username: member.username, online: member.online }))
     const meta = document.createElement('div')
     meta.className = 'muted'
@@ -1068,7 +1177,7 @@ function paintFriends(list) {
     const row = document.createElement('div')
     row.className = 'member'
     const name = document.createElement('b')
-    name.append(onlineDot(friend.online), document.createTextNode(friend.username))
+    name.append(onlineDot(friend.online), document.createTextNode(shown(friend.id, friend.username)))
     name.addEventListener('click', () => openPlayer(friend))
     const meta = document.createElement('span')
     meta.className = 'muted'
@@ -1384,10 +1493,22 @@ function roomCard(box) {
   box.append(h('h2', `${room.mode} · ${room.minutes} min${keeper}`))
   if (room.versus) box.append(p(`Club vs club · ${room.clubName} vs ${room.awayName}`))
   else if (room.clubName) box.append(p(`Club match · ${room.clubName}`))
-  const code = document.createElement('div')
-  code.className = 'code'
-  code.textContent = room.code
   const mine = room.hostId === state.me.id
+  if (mine && !room.versus) {
+    const invite = document.createElement('input')
+    invite.maxLength = 16
+    invite.placeholder = 'Invite by username'
+    box.append(invite, button('Send invite', 'primary', () => {
+      const username = invite.value.trim()
+      if (!username) return
+      send({ t: 'invite-name', username })
+      invite.value = ''
+      toast('Invite sent')
+    }))
+  }
+  const code = document.createElement('div')
+  code.className = 'muted'
+  code.textContent = `Room code ${room.code}`
   const clubRoom = !!(room.clubId || room.versus)
   box.append(code, p(
     room.versus
@@ -1440,7 +1561,7 @@ function roomCard(box) {
     const row = document.createElement('div')
     row.className = 'member'
     const name = document.createElement('b')
-    name.textContent = `${player.name}${player.id === room.hostId ? ' · host' : ''}${player.side === 'A' ? ' · home' : ''}${player.side === 'B' ? ' · away' : ''}${player.goalie ? ' · goalie' : ''}${clubRoom && player.ready ? ' · ready' : ''}`
+    name.textContent = `${shown(player.id, player.name)}${player.id === room.hostId ? ' · host' : ''}${player.side === 'A' ? ' · home' : ''}${player.side === 'B' ? ' · away' : ''}${player.goalie ? ' · goalie' : ''}${clubRoom && player.ready ? ' · ready' : ''}`
     const meta = document.createElement('span')
     meta.className = 'muted'
     meta.textContent = `${rankFor(player.rating)} ${player.rating}`
@@ -1474,7 +1595,7 @@ function chatBox() {
   for (const line of state.room?.chat || []) {
     const row = document.createElement('div')
     const name = document.createElement('b')
-    name.textContent = line.name
+    name.textContent = shown(line.id, line.name)
     row.append(name, document.createTextNode(` ${line.text}`))
     log.append(row)
   }
@@ -1511,7 +1632,7 @@ function invitePicker(room) {
       if (box.checked) picked.add(member.id)
       else picked.delete(member.id)
     })
-    label.append(box, document.createTextNode(member.username))
+    label.append(box, document.createTextNode(shown(member.id, member.username)))
     wrap.append(label)
   }
   wrap.append(button('Send match invites', 'primary', () => {
@@ -1543,7 +1664,7 @@ function resultsCard() {
     const info = document.createElement('div')
     info.className = 'grow'
     const name = document.createElement('b')
-    name.textContent = `${player.name}${player.goalie ? ' · GK' : ''}`
+    name.textContent = `${shown(player.id, player.name)}${player.goalie ? ' · GK' : ''}`
     const meta = document.createElement('div')
     meta.className = 'muted'
     const delta = player.delta > 0 ? `+${player.delta}` : String(player.delta)
@@ -1670,6 +1791,11 @@ function updateHud(snap) {
   fill.style.width = `${Math.max(0, Math.min(100, stamina))}%`
   fill.parentElement.classList.toggle('low', stamina < 20)
   const level = snap.difficulty ? snap.difficulty[0].toUpperCase() + snap.difficulty.slice(1) : ''
+  const roster = document.getElementById('roster')
+  if (roster) {
+    const side = (team) => (snap.players || []).filter((p) => p.team === team).map((p) => shown(p.id, p.name)).join(', ')
+    roster.textContent = `${side('A')}  ·  ${side('B')}`
+  }
   document.getElementById('club-line').textContent = snap.clubName
     ? snap.clubName
     : level
@@ -1680,7 +1806,7 @@ function updateHud(snap) {
     const mine = me && me.team === snap.celebrateTeam
     banner.replaceChildren()
     const title = document.createElement('b')
-    title.textContent = snap.scorerName ? `GOAL · ${snap.scorerName}` : 'GOAL'
+    title.textContent = snap.scorerName ? `GOAL · ${shown(null, snap.scorerName)}` : 'GOAL'
     const sub = document.createElement('div')
     sub.textContent = mine ? `Celebrate · ${Math.ceil(snap.phaseT)}s` : `Next kickoff · ${Math.ceil(snap.phaseT)}s`
     banner.append(title, sub)
@@ -2217,6 +2343,7 @@ async function boot() {
     world = await createWorld(canvas)
     world.setInputSource(() => currentStick())
     world.setDriveFollow(() => state.scheme === 'phone' && joy.active && !look.drag)
+    world.setNamer((id, name) => shown(id, name))
     state.firstPerson = localStorage.getItem('md-view') === '1'
     world.setFirstPerson(state.firstPerson)
     const lock = document.getElementById('view-lock')

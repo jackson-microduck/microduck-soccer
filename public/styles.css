@@ -271,7 +271,31 @@ body.phone #club-line, body.phone #credit { display: none; }
 .power-track { height: 18px; margin-top: 6px; background: #3a4454; border-radius: 99px; overflow: hidden; }
 #power-fill { display: block; height: 100%; width: 40%; background: linear-gradient(90deg, #7bd15c, #ffb000 55%, #ff3b30); }
 #power small { display: block; margin-top: 4px; font-weight: 800; }
-#club-line { font-size: 10px; color: var(--muted); font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px; margin: 2px auto 0; }
+#club-line, #roster { font-size: 10px; color: var(--muted); font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; margin: 2px auto 0; }
+#party-dock {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 40;
+  width: min(320px, calc(100vw - 24px));
+}
+#party-dock .toggle { position: relative; }
+#party-dock .badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #1f9d62;
+  color: white;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+#party-dock .panel { display: none; margin-top: 8px; }
+#party-dock.open .panel { display: grid; gap: 6px; background: #fffdfb; border-radius: 16px; padding: 10px; box-shadow: var(--shadow); }
+body.playing #party-dock { bottom: auto; top: 64px; right: 8px; width: min(240px, 46vw); }
 .icon-btn {
   position: absolute;
   top: max(8px, env(safe-area-inset-top));
