@@ -8,6 +8,7 @@ import {
   SPRINT_BALL,
   balanceTeams,
   createMatch,
+  modeForSide,
   integrateMover,
   rankFor,
   ratingDelta,
@@ -371,6 +372,25 @@ test('rating rewards goals and assists, and teams get balanced by rank', () => {
   assert.ok(Math.abs(sum(teams.A) - sum(teams.B)) <= 200)
   assert.equal(rankFor(1000), 'Hatchling')
   assert.equal(rankFor(2100), 'Legend')
+  const ten = balanceTeams(Array.from({ length: 10 }, (_, i) => ({ id: String(i), rating: 2000 - i })))
+  assert.equal(ten.A.length, 5)
+  assert.equal(ten.B.length, 5)
+  assert.equal(modeForSide(2), '2v2')
+  assert.equal(modeForSide(5), '5v5')
+  const five = createMatch({
+    mode: '5v5',
+    minutes: 3,
+    players: Array.from({ length: 10 }, (_, i) => ({
+      id: String(i + 1),
+      name: `D${i}`,
+      rating: 1000,
+      color: '#ff6a1a',
+      team: i < 5 ? 'A' : 'B',
+    })),
+  })
+  const sideA = five.players.filter((p) => p.team === 'A')
+  assert.equal(sideA.filter((p) => p.goalie).length, 1)
+  assert.equal(sideA.filter((p) => !p.goalie).length, 4)
 })
 
 test('goals are 1.5x and a walk-in still scores', () => {

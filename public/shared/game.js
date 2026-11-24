@@ -33,6 +33,15 @@ export const MODES = {
   '1v1': { players: 2, perTeam: 1, length: 7.0, width: 4.2 },
   '2v2': { players: 4, perTeam: 2, length: 8.6, width: 5.2 },
   '3v3': { players: 6, perTeam: 3, length: 10.4, width: 6.2 },
+  '4v4': { players: 8, perTeam: 4, length: 11.6, width: 6.8 },
+  '5v5': { players: 10, perTeam: 5, length: 12.8, width: 7.4 },
+}
+
+const MODE_BY_SIDE = ['1v1', '2v2', '3v3', '4v4', '5v5']
+
+export function modeForSide(perTeam) {
+  const n = Math.min(5, Math.max(1, Math.round(perTeam)))
+  return MODE_BY_SIDE[n - 1]
 }
 
 export const RANKS = [
@@ -83,14 +92,12 @@ export function ratingDelta({ teamAvg, oppAvg, won, draw, goals, assists }) {
 
 export function balanceTeams(players) {
   const sorted = [...players].sort((a, b) => b.rating - a.rating || String(a.id).localeCompare(String(b.id)))
-  const pattern = {
-    2: ['A', 'B'],
-    4: ['A', 'B', 'B', 'A'],
-    6: ['A', 'B', 'B', 'A', 'A', 'B'],
-  }[sorted.length]
-  if (!pattern) throw new Error('Matches need 2, 4, or 6 players')
   const teams = { A: [], B: [] }
-  sorted.forEach((p, i) => teams[pattern[i]].push(p))
+  sorted.forEach((p, i) => {
+    const pair = Math.floor(i / 2)
+    const side = (pair % 2 === 0 ? i % 2 === 0 : i % 2 === 1) ? 'A' : 'B'
+    teams[side].push(p)
+  })
   return teams
 }
 
@@ -163,6 +170,23 @@ function spotsFor(match, team) {
   const mode = match.mode
   const sign = team === 'A' ? -1 : 1
   const hl = match.length / 2
+  if (mode === '5v5') {
+    return [
+      { x: 0, z: sign * (hl - 0.45), goalie: true },
+      { x: -1.35, z: sign * 1.15 },
+      { x: 1.35, z: sign * 1.15 },
+      { x: -0.55, z: sign * 2.35 },
+      { x: 0.55, z: sign * 2.35 },
+    ]
+  }
+  if (mode === '4v4') {
+    return [
+      { x: -1.15, z: sign * 1.25 },
+      { x: 1.15, z: sign * 1.25 },
+      { x: -0.45, z: sign * 2.35 },
+      { x: 0.45, z: sign * 2.35 },
+    ]
+  }
   if (mode === '3v3' && match.goalies !== false) {
     return [
       { x: 0, z: sign * (hl - 0.4), goalie: true },
@@ -187,12 +211,17 @@ function spotsFor(match, team) {
 }
 
 function assignGoalies(players, mode, goalies) {
-  if (mode !== '3v3' || goalies === false) {
+  const five = mode === '5v5'
+  if ((!five && mode !== '3v3') || (!five && goalies === false)) {
     for (const p of players) p.goalie = false
     return
   }
   for (const team of ['A', 'B']) {
     const side = players.filter((p) => p.team === team)
+    if (five && side.length < 5) {
+      for (const p of side) p.goalie = false
+      continue
+    }
     let keeper = side.find((p) => p.goalie)
     if (!keeper) {
       keeper = [...side].sort((a, b) => a.rating - b.rating)[0]
@@ -221,7 +250,7 @@ export function createMatch({
     // minutes === 0 is rejected for real rooms. Tests pass 3 or 5.
   }
   const spec = MODES[mode]
-  const useGoalies = mode === '3v3' && goalies !== false
+  const useGoalies = mode === '5v5' || (mode === '3v3' && goalies !== false)
   const made = players.map((p) => makePlayer(p, p.team || 'A'))
   assignGoalies(made, mode, useGoalies)
   const match = {
@@ -279,7 +308,7 @@ function placeKickoff(match, team) {
     const open = layout.filter((s) => !s.goalie)
     const goalSpot = layout.find((s) => s.goalie)
     const ordered = keeper && goalSpot ? [keeper, ...others] : group
-    const used = keeper && goalSpot ? [goalSpot, ...open] : layout
+    const used = keeper && goalSpot ? [goalSpot, ...open] : (open.length ? open : layout)
     ordered.forEach((p, i) => {
       const spot = used[i] || used[used.length - 1]
       p.x = spot.x

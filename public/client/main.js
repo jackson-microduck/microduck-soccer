@@ -43,6 +43,8 @@ const state = {
   nicks: {},
   chatOpen: false,
   chatUnread: 0,
+  friendPick: false,
+  picked: [],
 }
 
 const COLORS = ['#ff6a1a', '#2f8cff', '#7bd15c', '#c084fc', '#ffb000', '#1c2430']
@@ -1145,6 +1147,23 @@ function friendsCard() {
   const box = card()
   box.append(h('h2', 'Friends'))
   box.append(p('Sorted by who you played with most recently. Search to filter.'))
+  box.append(button(state.friendPick ? 'Cancel' : 'Invite to Match', 'ghost', () => {
+    state.friendPick = !state.friendPick
+    state.picked = []
+    render()
+  }))
+  if (state.friendPick) {
+    box.append(p('Pick up to 2 friends.', 'muted'))
+    box.append(button('Make Match', 'primary', () => {
+      if (!state.picked.length) {
+        toast('Pick up to 2 friends.')
+        return
+      }
+      send({ t: 'friend-match', ids: state.picked.slice(0, 2) })
+      state.friendPick = false
+      state.picked = []
+    }))
+  }
   const search = document.createElement('input')
   search.type = 'search'
   search.placeholder = 'Search friends'
@@ -1183,7 +1202,17 @@ function paintFriends(list) {
     meta.className = 'muted'
     const when = friend.lastPlayed ? `Played ${friend.lastPlayed.slice(0, 16).replace('T', ' ')}` : 'No match together yet'
     meta.textContent = `${friend.online ? 'Online' : 'Offline'} · ${when}`
-    row.append(name, meta, button('Remove', 'ghost', async () => {
+    const picked = state.picked.includes(friend.id)
+    row.append(name, meta)
+    if (state.friendPick) {
+      row.append(button(picked ? 'Selected' : 'Select', picked ? 'primary' : 'ghost', () => {
+        if (picked) state.picked = state.picked.filter((id) => id !== friend.id)
+        else if (state.picked.length >= 2) toast('You can invite 2 friends.')
+        else state.picked = [...state.picked, friend.id]
+        paintFriends(list)
+      }))
+    }
+    row.append(button('Remove', 'ghost', async () => {
       try {
         await api('/api/friends/remove', { id: friend.id })
         await loadFriends()
@@ -1516,8 +1545,8 @@ function roomCard(box) {
       : room.practice
         ? 'Practice ducks will fill empty spots. Ranked rating stays put.'
         : clubRoom
-          ? 'Pick the mode and length, ready up, then the host presses Start. Empty spots fill with practice ducks.'
-          : 'Teams are balanced by rating when the host starts.',
+          ? 'Ready up, then start with 2 or more. A team can have up to 5, with a goalie when that side has 5.'
+          : 'Start with 2 or more players. A team can have up to 5.',
   ))
   if (clubRoom && mine && !room.versus) {
     const modes = document.createElement('div')
@@ -1581,7 +1610,11 @@ function roomCard(box) {
   if (clubRoom && !mine) {
     actions.append(button(me?.ready ? 'Not ready' : 'Ready', 'primary', () => send({ t: 'ready' })))
   }
-  if (mine) actions.append(button('Start match', 'primary', () => send({ t: 'start' })))
+  if (mine) {
+    actions.append(button('Play vs Bots', 'primary', () => send({ t: 'start', bots: 'same', difficulty: state.difficulty })))
+    actions.append(button('Play With Bots', 'ghost', () => send({ t: 'start', bots: 'mix', difficulty: state.difficulty })))
+    actions.append(button('Start match', 'primary', () => send({ t: 'start' })))
+  }
   actions.append(button('Leave room', 'ghost', () => send({ t: 'leave' })))
   box.append(chatBox(), p(state.error, 'error'), actions)
   return box
