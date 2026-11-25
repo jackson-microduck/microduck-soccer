@@ -129,6 +129,22 @@ CREATE TABLE IF NOT EXISTS feedback (
   text TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS feedback_replies (
+  id INTEGER PRIMARY KEY,
+  feedback_id INTEGER,
+  username TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  text TEXT NOT NULL,
+  seen INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS direct_messages (
+  id INTEGER PRIMARY KEY,
+  from_id INTEGER NOT NULL,
+  to_id INTEGER NOT NULL,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 `
 
 function sqlParam(value, index) {
@@ -367,6 +383,24 @@ export async function leaderboards(db, userId) {
     } : null,
     clubs: topClubs,
     yourClubs,
+  }
+}
+
+export async function creditSharedClub(db, players) {
+  const groups = new Map()
+  for (const p of players) {
+    if (p.bot || !p.clubId) continue
+    const key = `${p.clubId}:${p.team}`
+    const group = groups.get(key) || { clubId: Number(p.clubId), result: p.result, n: 0 }
+    group.n += 1
+    groups.set(key, group)
+  }
+  const upd = db.prepare('UPDATE clubs SET wins = wins + ?, losses = losses + ?, draws = draws + ? WHERE id = ?')
+  const seen = new Set()
+  for (const group of groups.values()) {
+    if (group.n < 2 || seen.has(group.clubId)) continue
+    seen.add(group.clubId)
+    await upd.run(group.result === 'win' ? 1 : 0, group.result === 'loss' ? 1 : 0, group.result === 'draw' ? 1 : 0, group.clubId)
   }
 }
 

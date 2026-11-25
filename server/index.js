@@ -461,7 +461,86 @@ export async function start(opts = {}) {
     const token = process.env.FEEDBACK_TOKEN
     if (!token || req.query.token !== token) return res.status(403).json({ error: 'Forbidden.' })
     const rows = await db.prepare('SELECT id, username, text, created_at FROM feedback ORDER BY id DESC LIMIT 100').all()
-    res.json({ feedback: rows })
+    const replies = await db.prepare('SELECT id, feedback_id, username, kind, text, seen, created_at FROM feedback_replies ORDER BY id DESC LIMIT 400').all()
+    res.json({ feedback: rows, replies })
+  }))
+
+  app.post('/api/feedback/reply', route(async (req, res) => {
+    const token = process.env.FEEDBACK_TOKEN
+    if (!token || req.query.token !== token) return res.status(403).json({ error: 'Forbidden.' })
+    const text = String(req.body?.text || '').trim().slice(0, 500)
+    if (!text) return res.status(400).json({ error: 'Write a reply.' })
+    let feedbackId = Number(req.body?.feedback_id) || null
+    let username = String(req.body?.username || '').trim()
+    if (feedbackId) {
+      const row = await db.prepare('SELECT username FROM feedback WHERE id = ?').get(feedbackId)
+      if (!row) return res.status(404).json({ error: 'That note is gone.' })
+      username = row.username
+    } else if (username) {
+      const row = await db.prepare('SELECT id, username FROM feedback WHERE username = ? COLLATE NOCASE ORDER BY id DESC LIMIT 1').get(username)
+      if (row) {
+        feedbackId = row.id
+        username = row.username
+      }
+    }
+    if (!username) return res.status(400).json({ error: 'Pick a note or a username.' })
+    const now = new Date().toISOString()
+    await db.prepare(
+      'INSERT INTO feedback_replies (feedback_id, username, kind, text, seen, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run(feedbackId, username, 'staff', text, 0, now)
+    const player = await getUserByName(db, username)
+    if (player) hub.deliver(player.id, { t: 'feedback-reply', text, username })
+    res.json({ ok: true })
+  }))
+
+  app.get('/api/feedback/mine', route(async (req, res) => {
+    const user = await requireUser(req, res)
+    if (!user) return
+    const replies = await db.prepare(
+      'SELECT id, text, created_at FROM feedback_replies WHERE username = ? AND kind = ? AND seen = ? ORDER BY id DESC LIMIT 5',
+    ).all(user.username, 'staff', 0)
+    res.json({ replies })
+  }))
+
+  app.post('/api/feedback/respond', route(async (req, res) => {
+    const user = await requireUser(req, res)
+    if (!user) return
+    const text = String(req.body?.text || '').trim().slice(0, 80)
+    if (!text) return res.status(400).json({ error: 'Pick a reply.' })
+    const latest = await db.prepare(
+      'SELECT feedback_id FROM feedback_replies WHERE username = ? AND kind = ? ORDER BY id DESC LIMIT 1',
+    ).get(user.username, 'staff')
+    const now = new Date().toISOString()
+    await db.prepare(
+      'INSERT INTO feedback_replies (feedback_id, username, kind, text, seen, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run(latest ? latest.feedback_id : null, user.username, 'player', text, 1, now)
+    await db.prepare('UPDATE feedback_replies SET seen = ? WHERE username = ? AND kind = ? AND seen = ?').run(1, user.username, 'staff', 0)
+    res.json({ ok: true })
+  }))
+
+  app.get('/api/messages/:id', route(async (req, res) => {
+    const user = await requireUser(req, res)
+    if (!user) return
+    const other = Number(req.params.id)
+    if (!other) return res.status(400).json({ error: 'Pick a player.' })
+    const rows = await db.prepare(`SELECT id, from_id, to_id, body, created_at FROM direct_messages
+      WHERE (from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?) ORDER BY id DESC LIMIT 40`).all(user.id, other, other, user.id)
+    res.json({ messages: rows.reverse() })
+  }))
+
+  app.post('/api/messages', route(async (req, res) => {
+    const user = await requireUser(req, res)
+    if (!user) return
+    const other = Number(req.body?.id)
+    const text = String(req.body?.text || '').trim().slice(0, 200)
+    if (!other || other === user.id) return res.status(400).json({ error: 'Pick another player.' })
+    if (!text) return res.status(400).json({ error: 'Write a message.' })
+    const now = new Date().toISOString()
+    await db.prepare('INSERT INTO direct_messages (from_id, to_id, body, created_at) VALUES (?, ?, ?, ?)').run(user.id, other, text, now)
+    hub.deliver(other, { t: 'dm', fromId: user.id, name: user.username, text, at: now })
+    const rows = await db.prepare(`SELECT id, from_id, to_id, body, created_at FROM direct_messages
+      WHERE (from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?) ORDER BY id DESC LIMIT 40`).all(user.id, other, other, user.id)
+    res.json({ messages: rows.reverse() })
   }))
 
   app.get('/api/notifications', route(async (req, res) => {

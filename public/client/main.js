@@ -195,6 +195,16 @@ function onNet(msg) {
     incomingNote(msg.note)
     return
   }
+  if (msg.t === 'dm') {
+    const pop = document.getElementById('dm')
+    if (pop && pop.dataset.who === String(msg.fromId)) appendDm({ from_id: msg.fromId, body: msg.text, created_at: msg.at })
+    else toast(`${msg.name}: ${msg.text}`)
+    return
+  }
+  if (msg.t === 'feedback-reply') {
+    showStaffNote(msg.text)
+    return
+  }
   if (msg.t === 'start') {
     if (state.screen === 'match') {
       if (msg.snap && state.snap) state.snap = mergeSnap(state.snap, msg.snap)
@@ -463,6 +473,7 @@ function authCard() {
       state.me = data.user
       state.screen = 'home'
       await refreshNotes()
+      await loadStaffNotes()
       connect()
       render()
     } catch (err) {
@@ -580,6 +591,83 @@ function onlineDot(on) {
   const dot = document.createElement('span')
   dot.className = on ? 'dot on' : 'dot'
   return dot
+}
+
+function appendDm(line) {
+  const log = document.getElementById('dm-log')
+  if (!log) return
+  const row = document.createElement('div')
+  const mine = line.from_id === state.me?.id
+  row.textContent = `${mine ? 'You' : 'Them'}: ${line.body}`
+  log.append(row)
+  log.scrollTop = log.scrollHeight
+}
+
+async function openDm(player) {
+  if (!player || player.id === state.me?.id) return
+  let pop = document.getElementById('dm')
+  if (!pop) {
+    pop = document.createElement('div')
+    pop.id = 'dm'
+    document.body.append(pop)
+  }
+  pop.dataset.who = String(player.id)
+  pop.replaceChildren()
+  const title = document.createElement('b')
+  title.textContent = shown(player.id, player.username || player.name)
+  const log = document.createElement('div')
+  log.className = 'chat-log'
+  log.id = 'dm-log'
+  const input = document.createElement('input')
+  input.maxLength = 200
+  input.placeholder = 'Message'
+  const sendDm = async () => {
+    const text = input.value.trim()
+    if (!text) return
+    input.value = ''
+    try {
+      const data = await api('/api/messages', { id: player.id, text })
+      log.replaceChildren()
+      for (const line of data.messages || []) appendDm(line)
+    } catch (err) { toast(err.message) }
+  }
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendDm() })
+  pop.append(title, log, input, button('Send', 'primary', sendDm), button('Close', 'ghost', () => pop.remove()))
+  try {
+    const data = await api(`/api/messages/${player.id}`)
+    for (const line of data.messages || []) appendDm(line)
+  } catch (err) { toast(err.message) }
+}
+
+function showStaffNote(text) {
+  let bar = document.getElementById('staff-note')
+  if (!bar) {
+    bar = document.createElement('div')
+    bar.id = 'staff-note'
+    document.body.append(bar)
+  }
+  bar.replaceChildren()
+  const body = document.createElement('p')
+  body.textContent = text
+  const row = document.createElement('div')
+  row.className = 'actions'
+  for (const label of ['Thanks!', 'Got it', 'Still broken']) {
+    row.append(button(label, 'ghost', async () => {
+      try {
+        await api('/api/feedback/respond', { text: label })
+        bar.remove()
+      } catch (err) { toast(err.message) }
+    }))
+  }
+  bar.append(body, row)
+}
+
+async function loadStaffNotes() {
+  if (!state.me) return
+  try {
+    const data = await api('/api/feedback/mine')
+    if (data.replies?.length) showStaffNote(data.replies[0].text)
+  } catch { /* notes can wait */ }
 }
 
 function openPlayer(player) {
@@ -1026,7 +1114,7 @@ function personButton(player) {
   meta.textContent = `${player.rank} · ${player.goals} goals · ${player.club ? player.club.name : 'No club'}`
   text.append(name, meta)
   node.append(text)
-  node.addEventListener('click', () => openPlayer(player))
+  node.addEventListener('click', () => openDm(player))
   return node
 }
 
@@ -1190,7 +1278,7 @@ function clubCard() {
     info.className = 'grow'
     const name = document.createElement('b')
     name.append(onlineDot(member.online), document.createTextNode(shown(member.id, member.username)))
-    row.addEventListener('click', () => openPlayer({ id: member.id, username: member.username, online: member.online }))
+    row.addEventListener('click', () => openDm({ id: member.id, username: member.username }))
     const meta = document.createElement('div')
     meta.className = 'muted'
     meta.textContent = `${member.rank} · ${member.rating} · ${member.goals}G ${member.assists}A · ${member.wins}-${member.losses}`
@@ -1356,7 +1444,7 @@ function paintFriends(list) {
     row.className = 'member'
     const name = document.createElement('b')
     name.append(onlineDot(friend.online), document.createTextNode(shown(friend.id, friend.username)))
-    name.addEventListener('click', () => openPlayer(friend))
+    name.addEventListener('click', () => openDm(friend))
     const meta = document.createElement('span')
     meta.className = 'muted'
     const when = friend.lastPlayed ? `Played ${friend.lastPlayed.slice(0, 16).replace('T', ' ')}` : 'No match together yet'
@@ -2481,6 +2569,7 @@ async function boot() {
     if (state.me) {
       await refreshMe()
       await refreshNotes()
+      await loadStaffNotes()
       connect()
       state.screen = 'home'
     } else state.screen = 'auth'

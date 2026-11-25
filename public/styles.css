@@ -220,33 +220,34 @@ body.playing.touch .stage-match { pointer-events: none; }
   top: max(4px, env(safe-area-inset-top));
   left: 50%;
   transform: translateX(-50%);
-  width: min(520px, calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - 16px));
+  width: min(360px, calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - 16px));
   display: grid;
   grid-template-columns: 1fr auto 1fr;
-  gap: 6px;
+  gap: 4px;
   align-items: center;
   background: rgba(255, 253, 251, 0.94);
-  border-radius: 18px;
-  padding: 6px 8px 7px;
-  box-shadow: 0 10px 30px rgba(40, 24, 8, 0.16);
+  border-radius: 12px;
+  padding: 3px 6px 4px;
+  box-shadow: 0 8px 18px rgba(40, 24, 8, 0.12);
 }
 body.phone .scorebug {
-  width: min(300px, calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - 108px));
-  gap: 4px;
-  border-radius: 12px;
-  padding: 2px 6px 3px;
+  width: min(210px, calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - 120px));
+  gap: 2px;
+  border-radius: 8px;
+  padding: 1px 4px 2px;
   box-shadow: none;
 }
-body.phone .scorebug img { width: 16px; height: 16px; border-radius: 5px; }
-body.phone .nums { font-size: 0.95rem; }
-body.phone #clock { font-size: 11px; line-height: 1.1; }
-body.phone .stamina { height: 3px; width: 48px; margin-top: 2px; }
+body.phone .scorebug img { display: none; }
+body.phone .side { font-size: 10px; gap: 2px; }
+body.phone .nums { font-size: 0.72rem; }
+body.phone #clock, body.phone #club-line, body.phone #roster { font-size: 9px; line-height: 1.05; }
+body.phone .stamina { display: none; }
 body.phone #club-line, body.phone #credit { display: none; }
 .side { display: flex; align-items: center; gap: 6px; min-width: 0; font-weight: 800; }
 .side.away { justify-content: flex-end; }
-.scorebug img { width: 32px; height: 32px; border-radius: 10px; object-fit: cover; background: #ffe1c4; }
-.mid { text-align: center; min-width: 92px; }
-.nums { font-size: 1.35rem; letter-spacing: 0.04em; line-height: 1; }
+.scorebug img { width: 22px; height: 22px; border-radius: 6px; object-fit: cover; background: #ffe1c4; }
+.mid { text-align: center; min-width: 64px; }
+.nums { font-size: 1rem; letter-spacing: 0.02em; line-height: 1; }
 .nums span { color: var(--muted); margin: 0 4px; }
 #clock { font-weight: 800; font-variant-numeric: tabular-nums; }
 .stamina { margin: 4px auto 0; height: 8px; width: 92px; background: #efe4d8; border-radius: 99px; overflow: hidden; }
@@ -295,6 +296,18 @@ body.phone #club-line, body.phone #credit { display: none; }
 }
 #party-dock .panel { display: none; gap: 6px; margin-top: 8px; background: #fffdfb; border-radius: 16px; padding: 10px; box-shadow: var(--shadow); }
 #party-dock.open .panel { display: grid; }
+#dm, #staff-note {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 55;
+  width: min(320px, calc(100vw - 24px));
+  background: #fffdfb;
+  border-radius: 16px;
+  padding: 12px;
+  box-shadow: var(--shadow);
+}
+#staff-note { left: 12px; right: auto; bottom: 12px; }
 #party-pop {
   position: fixed;
   top: 16px;
@@ -554,21 +567,21 @@ body.phone #stick.live { display: block; }
 }
 #pad {
   position: absolute;
-  right: calc(env(safe-area-inset-right, 0px) + 10px);
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+  right: calc(env(safe-area-inset-right, 0px) + 8px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
   display: grid;
-  grid-template-columns: 108px;
-  gap: 10px;
+  grid-template-columns: 84px;
+  gap: 6px;
   touch-action: none;
 }
 #pad button {
-  height: 76px;
+  height: 52px;
   border: 0;
-  border-radius: 18px;
+  border-radius: 14px;
   background: rgba(255,253,251,.94);
   font-weight: 800;
-  font-size: 16px;
-  box-shadow: 0 8px 16px rgba(40,24,8,.12);
+  font-size: 13px;
+  box-shadow: 0 6px 12px rgba(40,24,8,.12);
 }
 #pad button.wide { grid-column: 1 / -1; height: 58px; }
 #pad button.held { background: #1d2430; color: white; }
@@ -621,15 +634,26 @@ body:not(.phone) #pad {
   pointer-events: none !important;
 }
 @media (max-width: 700px) {
+  .top, .layout { padding-left: 8px; padding-right: 8px; }
+  .card { padding: 12px; }
+  input, textarea { font-size: 16px; }
+  .actions button, button { min-height: 40px; }
   #leave-btn, #help-btn { top: max(8px, env(safe-area-inset-top)); }
   .scorebug {
     grid-template-columns: 0.8fr auto 0.8fr;
-    width: calc(100vw - 16px);
-    top: calc(max(8px, env(safe-area-inset-top)) + 46px);
+    width: min(220px, calc(100vw - 108px));
+    top: max(4px, env(safe-area-inset-top));
   }
-  .nums { font-size: 1.05rem; }
-  .scorebug img { width: 26px; height: 26px; }
-  #power { top: calc(max(8px, env(safe-area-inset-top)) + 132px); }
-  #pad { bottom: max(72px, calc(48px + env(safe-area-inset-bottom))); }
-  #pad button { background: #fff; border: 2px solid #ffd0b8; }
+  .nums { font-size: 0.78rem; }
+  .scorebug img { display: none; }
+  #power { top: calc(max(8px, env(safe-area-inset-top)) + 72px); }
+  #pad { bottom: max(8px, env(safe-area-inset-bottom)); }
+  #pad button { height: 48px; background: #fff; border: 2px solid #ffd0b8; }
+  #party-dock, #party-pop, #player-menu, #dm, #staff-note {
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-width: none;
+  }
+  #dm, #staff-note { bottom: 8px; }
 }

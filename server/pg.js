@@ -1,6 +1,6 @@
 import pg from 'pg'
 
-const ID_TABLES = new Set(['users', 'clubs', 'challenges', 'club_invites', 'notifications', 'matches', 'reports', 'chat_messages'])
+const ID_TABLES = new Set(['users', 'clubs', 'challenges', 'club_invites', 'notifications', 'matches', 'reports', 'chat_messages', 'feedback', 'feedback_replies', 'direct_messages'])
 
 export function translateSql(sql) {
   let text = String(sql).trim()

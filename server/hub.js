@@ -9,7 +9,7 @@ import {
   snapshot,
   step,
 } from '../public/shared/game.js'
-import { createNotification, getUserById, getUserByName, membership, persistResult, recordClubMatch, touchFriendPlay } from './db.js'
+import { createNotification, creditSharedClub, getUserById, getUserByName, membership, persistResult, recordClubMatch, touchFriendPlay } from './db.js'
 import { BOT_DIFFICULTIES, botRoster, driveBots } from './bots.js'
 import { cleanChat, cleanUsername, randomCode } from './auth.js'
 
@@ -141,6 +141,7 @@ export function createHub(db) {
       color: user.color,
       bot: false,
       careerGoals: user.goals || 0,
+      clubId: user.club_id || null,
     }
   }
 
@@ -224,6 +225,11 @@ export function createHub(db) {
   function pushNote(userId, note) {
     const conn = online.get(userId)
     if (conn) send(conn.ws, { t: 'note', note })
+  }
+
+  function deliver(userId, msg) {
+    const conn = online.get(Number(userId))
+    if (conn) send(conn.ws, msg)
   }
 
   function useGoalies(mode, goalies) {
@@ -347,8 +353,10 @@ export function createHub(db) {
       score: live.match.score,
       players: settled,
     })
-    if (live.match.ranked && live.match.homeClubId && live.match.awayClubId) {
+    if (live.match.homeClubId && live.match.awayClubId) {
       await recordClubMatch(db, live.match.homeClubId, live.match.awayClubId, live.match.score)
+    } else {
+      await creditSharedClub(db, settled)
     }
     const payload = {
       t: 'end',
@@ -1161,5 +1169,5 @@ export function createHub(db) {
     return room
   }
 
-  return { attach, tick, pushNote, online, rooms, openChallenge, refreshClub }
+  return { attach, tick, pushNote, deliver, online, rooms, openChallenge, refreshClub }
 }

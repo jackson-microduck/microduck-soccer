@@ -118,6 +118,7 @@ export function makePlayer(raw, team) {
     rating: raw.rating ?? START_RATING,
     color: raw.color || '#ff6a1a',
     bot: !!raw.bot,
+    clubId: raw.clubId || null,
     team,
     goalie: !!raw.goalie,
     x: 0,
@@ -668,7 +669,7 @@ function tryGoal(match, prevZ, events) {
   if (match.phase !== 'play') return
   const ball = match.ball
   const hl = match.length / 2
-  const inMouth = Math.abs(ball.x) <= match.goalW / 2 + 0.02 && ball.y <= match.goalH + 0.04 && ball.y >= -0.02
+  const inMouth = Math.abs(ball.x) + BALL_R <= match.goalW / 2 + 0.001 && ball.y + BALL_R <= match.goalH + 0.001 && ball.y >= -0.02
   const forward = ball.z > hl && (prevZ <= hl || inMouth)
   const back = ball.z < -hl && (prevZ >= -hl || inMouth)
   if (!forward && !back) return
@@ -791,34 +792,39 @@ function tryCatch(match) {
 }
 
 function detectSlides(match, events) {
+  if (match.phase !== 'play') return
   const ball = match.ball
-  if (!ball.owner || match.phase !== 'play') return
-  const carrier = playerById(match, ball.owner)
-  if (!carrier) return
   for (const p of match.players) {
-    if (p.slideT <= 0 || p.slideHit || p.team === carrier.team || p === carrier) continue
+    if (p.slideT <= 0 || p.slideHit) continue
     const fx = p.x + Math.sin(p.slideYaw) * 0.16
     const fz = p.z + Math.cos(p.slideYaw) * 0.16
-    const dCar = hypot(fx - carrier.x, fz - carrier.z)
-    const dBall = hypot(fx - ball.x, fz - ball.z)
-    if (dCar > 0.36 && dBall > 0.32) continue
-    if (ballProtected(carrier) || p.notedDodge) {
-      if (!p.notedDodge) {
-        p.notedDodge = true
-        events.push({ type: 'dodge', by: p.name, carrier: carrier.name })
+    for (const other of match.players) {
+      if (other === p || other.team === p.team) continue
+      if (hypot(fx - other.x, fz - other.z) > 0.36) continue
+      const has = ball.owner === other.id
+      if (has && (ballProtected(other) || p.notedDodge)) {
+        if (!p.notedDodge) {
+          p.notedDodge = true
+          events.push({ type: 'dodge', by: p.name, carrier: other.name })
+        }
+        continue
       }
-      continue
+      other.stun = 1
+      other.pickupLock = Math.max(other.pickupLock || 0, 1)
+      other.vx = 0
+      other.vz = 0
+      other.anim = 'fall'
+      other.animT = 0
+      p.slideHit = true
+      if (has) {
+        ball.owner = p.id
+        ball.lastPass = null
+        ball.lastTouch = { id: p.id, team: p.team, t: match.elapsed }
+        stickBall(match, p)
+        events.push({ type: 'steal', by: p.name, from: other.name })
+      }
+      break
     }
-    p.slideHit = true
-    carrier.stun = STEAL_STUMBLE
-    carrier.anim = 'fall'
-    carrier.animT = 0
-    ball.owner = p.id
-    ball.lastPass = null
-    ball.lastTouch = { id: p.id, team: p.team, t: match.elapsed }
-    stickBall(match, p)
-    events.push({ type: 'steal', by: p.name, from: carrier.name })
-    break
   }
 }
 
@@ -1130,6 +1136,7 @@ export function settlePlayers(match) {
       rankAfter: rankFor((p.careerGoals || 0) + p.goals),
       result,
       goalie: p.goalie,
+      clubId: p.clubId || null,
     }
   })
 }
