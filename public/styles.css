@@ -293,7 +293,8 @@ body.phone #club-line, body.phone #credit { display: none; }
   line-height: 18px;
   text-align: center;
 }
-#party-dock .panel { display: grid; gap: 6px; background: #fffdfb; border-radius: 16px; padding: 10px; box-shadow: var(--shadow); }
+#party-dock .panel { display: none; gap: 6px; margin-top: 8px; background: #fffdfb; border-radius: 16px; padding: 10px; box-shadow: var(--shadow); }
+#party-dock.open .panel { display: grid; }
 #party-pop {
   position: fixed;
   top: 16px;

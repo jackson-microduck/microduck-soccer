@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { WebSocket } from 'ws'
 import { start } from '../server/index.js'
 
 function cookieFrom(res) {
@@ -38,6 +39,48 @@ test('feedback saves a note and the token gate stays closed', async () => {
     assert.equal((await me.json()).user.goals, 0)
   } finally {
     delete process.env.FEEDBACK_TOKEN
+    await app.close()
+  }
+})
+
+test('leaving a party clears it immediately', async () => {
+  const app = await start({ port: 0, dbPath: ':memory:' })
+  try {
+    const res = await fetch(`http://127.0.0.1:${app.port}/api/signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'Ada', password: 'secret' }),
+    })
+    const cookie = cookieFrom(res)
+    const ws = new WebSocket(`ws://127.0.0.1:${app.port}`, { headers: { Cookie: cookie } })
+    const inbox = []
+    ws.on('message', (buf) => inbox.push(JSON.parse(String(buf))))
+    await new Promise((resolve, reject) => { ws.on('open', resolve); ws.on('error', reject) })
+    ws.send(JSON.stringify({ t: 'party-create' }))
+    const madeAt = Date.now()
+    while (Date.now() - madeAt < 2000 && !inbox.some((m) => m.t === 'party' && m.id)) {
+      await new Promise((r) => setTimeout(r, 15))
+    }
+    ws.send(JSON.stringify({ t: 'party-leave' }))
+    const startAt = Date.now()
+    let left = null
+    while (Date.now() - startAt < 2000) {
+      left = inbox.find((m) => m.t === 'party' && !m.id)
+      if (left) break
+      await new Promise((r) => setTimeout(r, 15))
+    }
+    assert.equal(left.id, null)
+    ws.send(JSON.stringify({ t: 'party-say', text: 'still here' }))
+    const startErr = Date.now()
+    let err = null
+    while (Date.now() - startErr < 2000) {
+      err = inbox.find((m) => m.t === 'error')
+      if (err) break
+      await new Promise((r) => setTimeout(r, 15))
+    }
+    assert.match(err.message, /party/)
+    ws.close()
+  } finally {
     await app.close()
   }
 })

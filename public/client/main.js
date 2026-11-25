@@ -147,7 +147,10 @@ function onNet(msg) {
   if (msg.t === 'party') {
     const slot = msg.clubId ? 'clubParty' : 'party'
     if (msg.cleared === 'club') state.clubParty = null
-    else if (!msg.clubId && !msg.id) state.party = null
+    else if (!msg.clubId && !msg.id) {
+      state.party = null
+      state.chatOpen = false
+    }
     else {
       const prev = state[slot]?.chat?.length || 0
       const next = msg.chat?.length || 0
@@ -664,6 +667,19 @@ function paintPartyDock() {
   const typing = keep && document.activeElement === keep
   const draft = typing ? keep.value : ''
   dock.replaceChildren()
+  if (!chat.clubId) {
+    const toggle = document.createElement('button')
+    toggle.type = 'button'
+    toggle.className = 'toggle'
+    toggle.textContent = 'Party Chat'
+    toggle.addEventListener('click', () => {
+      state.chatOpen = !state.chatOpen
+      paintPartyDock()
+    })
+    dock.append(toggle)
+    dock.classList.toggle('open', !!state.chatOpen)
+    if (!state.chatOpen) return
+  } else dock.classList.add('open')
   const panel = document.createElement('div')
   panel.className = 'panel'
   const title = document.createElement('b')
@@ -714,7 +730,13 @@ function partyCard() {
       row.append(name)
       list.append(row)
     }
-    box.append(list)
+    box.append(list, button('Leave party', 'ghost', () => {
+      state.party = null
+      state.chatOpen = false
+      paintPartyDock()
+      send({ t: 'party-leave' })
+      render()
+    }))
   }
   box.append(h('h3', 'Invite friends'))
   const friends = state.friends?.list || []

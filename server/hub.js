@@ -829,6 +829,16 @@ export function createHub(db) {
       sendParty(party)
       return
     }
+    if (msg.t === 'party-leave') {
+      const party = parties.get(conn.partyId)
+      conn.partyId = null
+      if (party && !party.clubId) {
+        party.members.delete(conn.user.id)
+        sendParty(party)
+      }
+      send(conn.ws, { t: 'party', id: null, clubId: null, members: [], chat: [] })
+      return
+    }
     if (msg.t === 'party-join') {
       const party = parties.get(String(msg.id))
       if (!party) return fail(conn, 'That party is gone.')
