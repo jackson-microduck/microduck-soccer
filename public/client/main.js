@@ -139,6 +139,11 @@ function onNet(msg) {
     }
     return
   }
+  if (msg.t === 'party-open') {
+    state.screen = 'party'
+    render()
+    return
+  }
   if (msg.t === 'party') {
     const slot = msg.clubId ? 'clubParty' : 'party'
     if (msg.cleared === 'club') state.clubParty = null
@@ -307,6 +312,7 @@ function logoFor(src, letter, color) {
 
 function render() {
   document.body.classList.toggle('playing', state.screen === 'match')
+  paintPartyDock()
   if (state.screen === 'match') {
     app.replaceChildren()
     return
@@ -624,8 +630,8 @@ function partyChat() {
 }
 
 function activeChat() {
-  if (state.party?.id) return state.party
-  if (state.clubParty?.id) return state.clubParty
+  if (state.party?.id && !state.party.clubId) return state.party
+  if (state.screen === 'club' && state.clubParty?.id) return state.clubParty
   return null
 }
 
@@ -1128,7 +1134,7 @@ function clubCard() {
   title.textContent = state.club.name
   text.append(title, p(`Active · code ${state.club.code} · led by ${state.club.owner}`))
   head.append(text)
-  box.append(head)
+  box.append(head, button('Party with Club', 'primary', () => send({ t: 'party-club' })))
   const totals = document.createElement('div')
   totals.className = 'stats'
   const record = state.club.record || { wins: 0, goalsFor: 0, goalsAgainst: 0 }
@@ -2116,6 +2122,7 @@ function enterMatch(msg) {
   state.matchId = msg.snap?.id || state.pickerFor || ''
   state.result = null
   state.screen = 'match'
+  paintPartyDock()
   showMatch()
   world.setMatch(msg.you.id)
   world.pushSnap(msg.snap, currentStick())

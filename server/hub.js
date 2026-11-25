@@ -765,6 +765,37 @@ export function createHub(db) {
       else sendParty(party)
       return
     }
+    if (msg.t === 'party-club') {
+      const user = await getUserById(db, conn.user.id)
+      if (user) conn.user = user
+      if (!user?.club_id) return fail(conn, 'Join a club first.')
+      const mates = await db.prepare(`SELECT u.id FROM memberships m
+        JOIN users u ON u.id = m.user_id
+        WHERE m.club_id = ? AND COALESCE(u.is_bot, 0) = 0`).all(user.club_id)
+      const party = parties.get(`p${conn.user.id}`) || {
+        id: `p${conn.user.id}`,
+        leaderId: conn.user.id,
+        members: new Set([conn.user.id]),
+        chat: [],
+      }
+      parties.set(party.id, party)
+      party.members.add(conn.user.id)
+      conn.partyId = party.id
+      party.chat = await loadChat(party.id)
+      for (const mate of mates) {
+        if (mate.id === conn.user.id || !online.get(mate.id)) continue
+        const note = await createNotification(db, {
+          userId: mate.id,
+          kind: 'party_invite',
+          body: `${conn.user.username} invited you to a party`,
+          payload: { partyId: party.id, from: conn.user.username },
+        })
+        pushNote(mate.id, note)
+      }
+      sendParty(party)
+      send(conn.ws, { t: 'party-open' })
+      return
+    }
     if (msg.t === 'party-create') {
       let party = conn.partyId && parties.get(conn.partyId)
       if (!party) {
