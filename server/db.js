@@ -123,6 +123,12 @@ CREATE TABLE IF NOT EXISTS nicknames (
   nick TEXT NOT NULL,
   PRIMARY KEY (viewer_id, target_id)
 );
+CREATE TABLE IF NOT EXISTS feedback (
+  id INTEGER PRIMARY KEY,
+  username TEXT NOT NULL,
+  text TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 `
 
 function sqlParam(value, index) {

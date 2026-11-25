@@ -448,6 +448,22 @@ export async function start(opts = {}) {
     res.json({ ok: true })
   }))
 
+  app.post('/api/feedback', route(async (req, res) => {
+    const user = await requireUser(req, res)
+    if (!user) return
+    const text = String(req.body?.text || '').trim().slice(0, 500)
+    if (!text) return res.status(400).json({ error: 'Write a short note first.' })
+    await db.prepare('INSERT INTO feedback (username, text, created_at) VALUES (?, ?, ?)').run(user.username, text, new Date().toISOString())
+    res.json({ ok: true })
+  }))
+
+  app.get('/api/feedback', route(async (req, res) => {
+    const token = process.env.FEEDBACK_TOKEN
+    if (!token || req.query.token !== token) return res.status(403).json({ error: 'Forbidden.' })
+    const rows = await db.prepare('SELECT id, username, text, created_at FROM feedback ORDER BY id DESC LIMIT 100').all()
+    res.json({ feedback: rows })
+  }))
+
   app.get('/api/notifications', route(async (req, res) => {
     const user = await requireUser(req, res)
     if (!user) return

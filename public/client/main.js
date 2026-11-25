@@ -557,7 +557,19 @@ function homeCard() {
   notes.append(alertsButton())
   if (!state.notes.length) notes.append(p('No invites waiting.', 'muted'))
   for (const note of state.notes) notes.append(noteCard(note))
-  wrap.append(hero, season, club, notes)
+  const feedback = card()
+  feedback.append(h('h3', 'Feedback'))
+  const note = document.createElement('textarea')
+  note.maxLength = 500
+  note.placeholder = 'Map bugs or anything else'
+  feedback.append(note, button('Send', 'primary', async () => {
+    try {
+      await api('/api/feedback', { text: note.value })
+      note.value = ''
+      toast('Feedback sent')
+    } catch (err) { toast(err.message) }
+  }))
+  wrap.append(hero, season, club, notes, feedback)
   return wrap
 }
 
