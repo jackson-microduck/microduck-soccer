@@ -687,7 +687,14 @@ function openPlayer(player) {
   nick.value = state.nicks[String(player.id)] || ''
   pop.append(
     title,
-    button('Join', 'primary', () => { send({ t: 'join-player', id: player.id }); pop.remove() }),
+    button('Message', 'primary', () => { pop.remove(); openDm(player) }),
+    button('Add friend', 'ghost', async () => {
+      try {
+        const data = await api('/api/friends', { username: player.username })
+        toast(data.accepted ? `You and ${player.username} are friends` : `Asked ${player.username}`)
+      } catch (err) { toast(err.message) }
+    }),
+    button('Join', 'ghost', () => { send({ t: 'join-player', id: player.id }); pop.remove() }),
     button('Invite to match', 'ghost', () => { send({ t: 'invite-match', id: player.id }); pop.remove() }),
     button('Invite to party', 'ghost', () => { send({ t: 'party-invite', id: player.id }); pop.remove() }),
     nick,
@@ -1114,7 +1121,7 @@ function personButton(player) {
   meta.textContent = `${player.rank} · ${player.goals} goals · ${player.club ? player.club.name : 'No club'}`
   text.append(name, meta)
   node.append(text)
-  node.addEventListener('click', () => openDm(player))
+  node.addEventListener('click', () => openPlayer(player))
   return node
 }
 
@@ -1278,7 +1285,7 @@ function clubCard() {
     info.className = 'grow'
     const name = document.createElement('b')
     name.append(onlineDot(member.online), document.createTextNode(shown(member.id, member.username)))
-    row.addEventListener('click', () => openDm({ id: member.id, username: member.username }))
+    row.addEventListener('click', () => openPlayer({ id: member.id, username: member.username, online: member.online }))
     const meta = document.createElement('div')
     meta.className = 'muted'
     meta.textContent = `${member.rank} · ${member.rating} · ${member.goals}G ${member.assists}A · ${member.wins}-${member.losses}`
@@ -1444,7 +1451,7 @@ function paintFriends(list) {
     row.className = 'member'
     const name = document.createElement('b')
     name.append(onlineDot(friend.online), document.createTextNode(shown(friend.id, friend.username)))
-    name.addEventListener('click', () => openDm(friend))
+    name.addEventListener('click', () => openPlayer(friend))
     const meta = document.createElement('span')
     meta.className = 'muted'
     const when = friend.lastPlayed ? `Played ${friend.lastPlayed.slice(0, 16).replace('T', ' ')}` : 'No match together yet'
@@ -2424,7 +2431,7 @@ function setupInput() {
     if (e.pointerType === 'mouse') return
     const box = matchEl.getBoundingClientRect()
     if (e.clientX - box.left < box.width * 0.5) return
-    if (e.target.closest && e.target.closest('#pad, button, #quick-chat, #chat-toggle, #help, .icon-btn, #power, #behind, #view-lock')) return
+    if (e.target.closest && e.target.closest('#pad, button, #quick-chat, #chat-toggle, #help, .icon-btn, #power, #behind, #view-lock, #snap-cam')) return
     if (look.drag) return
     if (e.cancelable) e.preventDefault()
     look.drag = true
@@ -2441,6 +2448,7 @@ function setupInput() {
   const onLookEnd = (e) => {
     if (!look.drag || e.pointerId !== look.id) return
     look.drag = false
+    look.held = false
     look.id = null
     world?.setLookDrag(false)
   }
@@ -2509,6 +2517,12 @@ function setupInput() {
     localStorage.setItem('md-view', state.firstPerson ? '1' : '0')
     world?.setFirstPerson(state.firstPerson)
     document.getElementById('view-lock').textContent = state.firstPerson ? '1st' : '3rd'
+  })
+  document.getElementById('snap-cam').addEventListener('click', () => {
+    look.held = false
+    look.drag = false
+    world?.setLookDrag(false)
+    world?.snapBehind()
   })
   const behind = document.getElementById('behind')
   const behindOn = (e) => { e.preventDefault(); world?.setBehind(true) }

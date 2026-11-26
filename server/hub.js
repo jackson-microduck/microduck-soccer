@@ -356,7 +356,7 @@ export function createHub(db) {
     if (live.match.homeClubId && live.match.awayClubId) {
       await recordClubMatch(db, live.match.homeClubId, live.match.awayClubId, live.match.score)
     } else {
-      await creditSharedClub(db, settled)
+      await creditSharedClub(db, settled, live.match.score)
     }
     const payload = {
       t: 'end',

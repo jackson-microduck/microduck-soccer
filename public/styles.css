@@ -242,7 +242,7 @@ body.phone .side { font-size: 10px; gap: 2px; }
 body.phone .nums { font-size: 0.72rem; }
 body.phone #clock, body.phone #club-line, body.phone #roster { font-size: 9px; line-height: 1.05; }
 body.phone .stamina { display: none; }
-body.phone #club-line, body.phone #credit { display: none; }
+body.phone #credit { display: none; }
 .side { display: flex; align-items: center; gap: 6px; min-width: 0; font-weight: 800; }
 .side.away { justify-content: flex-end; }
 .scorebug img { width: 22px; height: 22px; border-radius: 6px; object-fit: cover; background: #ffe1c4; }
@@ -348,7 +348,7 @@ body.playing #party-dock { bottom: auto; top: 64px; right: 8px; width: min(240px
   padding: 0 10px;
 }
 body.phone #leave-btn { left: calc(env(safe-area-inset-left, 0px) + 36px); }
-#view-lock, #behind {
+#view-lock, #snap-cam, #behind {
   position: absolute;
   z-index: 7;
   border: 0;
@@ -358,13 +358,14 @@ body.phone #leave-btn { left: calc(env(safe-area-inset-left, 0px) + 36px); }
   font-weight: 800;
   font-size: 12px;
 }
-#view-lock {
+#view-lock, #snap-cam {
   top: calc(max(8px, env(safe-area-inset-top)) + 46px);
   left: calc(env(safe-area-inset-left, 0px) + 8px);
   width: 42px;
   height: 28px;
 }
-body.phone #view-lock { left: calc(env(safe-area-inset-left, 0px) + 36px); }
+#snap-cam { top: calc(max(8px, env(safe-area-inset-top)) + 78px); }
+body.phone #view-lock, body.phone #snap-cam { left: calc(env(safe-area-inset-left, 0px) + 36px); }
 #behind {
   left: 50%;
   bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
@@ -649,11 +650,14 @@ body:not(.phone) #pad {
   #power { top: calc(max(8px, env(safe-area-inset-top)) + 72px); }
   #pad { bottom: max(8px, env(safe-area-inset-bottom)); }
   #pad button { height: 48px; background: #fff; border: 2px solid #ffd0b8; }
-  #party-dock, #party-pop, #player-menu, #dm, #staff-note {
+  #party-pop, #player-menu {
     left: 8px;
     right: 8px;
     width: auto;
     max-width: none;
+    transform: none;
   }
-  #dm, #staff-note { bottom: 8px; }
+  #staff-note { top: 8px; bottom: auto; left: 8px; right: 8px; width: auto; max-height: 28vh; overflow: auto; }
+  #dm { top: 34vh; bottom: auto; left: 8px; right: 8px; width: auto; max-height: 32vh; overflow: auto; }
+  #party-dock { top: auto; bottom: 8px; left: 8px; right: 8px; width: auto; max-height: 30vh; overflow: auto; }
 }

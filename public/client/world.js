@@ -850,6 +850,11 @@ export async function createWorld(canvas) {
     setBehind(on) { lookBehind = !!on },
     setFirstPerson(on) { firstPerson = !!on },
     setDriveFollow(fn) { driveFollow = fn },
+    snapBehind() {
+      const me = shown.get(meId)
+      if (me) camYaw = me.yaw
+      lookDrag = false
+    },
     setNamer(fn) { namer = fn || ((_id, name) => name) },
     celebrate(at) {
       const count = phoneScreen() ? 6 : 16

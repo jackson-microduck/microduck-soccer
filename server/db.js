@@ -386,21 +386,24 @@ export async function leaderboards(db, userId) {
   }
 }
 
-export async function creditSharedClub(db, players) {
+export async function creditSharedClub(db, players, score = { A: 0, B: 0 }) {
   const groups = new Map()
   for (const p of players) {
     if (p.bot || !p.clubId) continue
     const key = `${p.clubId}:${p.team}`
-    const group = groups.get(key) || { clubId: Number(p.clubId), result: p.result, n: 0 }
+    const group = groups.get(key) || { clubId: Number(p.clubId), team: p.team, result: p.result, n: 0 }
     group.n += 1
     groups.set(key, group)
   }
-  const upd = db.prepare('UPDATE clubs SET wins = wins + ?, losses = losses + ?, draws = draws + ? WHERE id = ?')
+  const upd = db.prepare(`UPDATE clubs SET wins = wins + ?, losses = losses + ?, draws = draws + ?,
+    goals_for = goals_for + ?, goals_against = goals_against + ? WHERE id = ?`)
   const seen = new Set()
   for (const group of groups.values()) {
     if (group.n < 2 || seen.has(group.clubId)) continue
     seen.add(group.clubId)
-    await upd.run(group.result === 'win' ? 1 : 0, group.result === 'loss' ? 1 : 0, group.result === 'draw' ? 1 : 0, group.clubId)
+    const gf = group.team === 'A' ? (score.A | 0) : (score.B | 0)
+    const ga = group.team === 'A' ? (score.B | 0) : (score.A | 0)
+    await upd.run(group.result === 'win' ? 1 : 0, group.result === 'loss' ? 1 : 0, group.result === 'draw' ? 1 : 0, gf, ga, group.clubId)
   }
 }
 

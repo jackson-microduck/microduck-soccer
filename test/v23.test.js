@@ -53,9 +53,11 @@ test('stun, posts, messages, replies, and shared club wins', async () => {
   await creditSharedClub(db, [
     { id: 1, bot: false, clubId: 1, team: 'A', result: 'win' },
     { id: 2, bot: false, clubId: 1, team: 'A', result: 'win' },
-  ])
-  const club = await db.prepare('SELECT wins FROM clubs WHERE id = ?').get(1)
+  ], { A: 2, B: 1 })
+  const club = await db.prepare('SELECT wins, goals_for, goals_against FROM clubs WHERE id = ?').get(1)
   assert.equal(club.wins, 1)
+  assert.equal(club.goals_for, 2)
+  assert.equal(club.goals_against, 1)
 
   const app = await start({ port: 0, dbPath: ':memory:' })
   try {
