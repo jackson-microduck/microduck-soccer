@@ -529,7 +529,6 @@ function homeCard() {
     button('Club', 'ghost', () => { state.screen = 'club'; state.askedClub = 0; render() }),
     button('Friends', 'ghost', () => { state.screen = 'friends'; loadFriends(); render() }),
     button('Ranks', 'ghost', () => { state.screen = 'ranks'; loadRanks(); render() }),
-    button('Find players', 'ghost', () => { state.screen = 'directory'; loadDirectory(); render() }),
     button('Report', 'ghost', () => { state.screen = 'report'; loadReportNames(); render() }),
     button('Account', 'ghost', () => { state.screen = 'settings'; render() }),
     button('Controls', 'ghost', () => openHelp(hero)),
@@ -564,7 +563,7 @@ function homeCard() {
     text.append(name, p(`Code ${state.club.code} · ${state.club.members.length} players`, 'muted'))
     row.append(text)
     club.append(row)
-  } else club.append(p('No club yet. Make one and invite friends from the directory.'))
+  } else club.append(p('No club yet. Make one and invite friends from Friends.'))
   club.append(button(state.club ? 'Open club' : 'Create a club', 'ghost', () => { state.screen = 'club'; render() }))
   const notes = card()
   notes.append(h('h3', 'Invites'))
@@ -835,7 +834,7 @@ function partyCard() {
   }
   box.append(h('h3', 'Invite friends'))
   const friends = state.friends?.list || []
-  if (!friends.length) box.append(p('No friends yet. Add some from Find players.', 'muted'))
+  if (!friends.length) box.append(p('No friends yet. Search for a player above.', 'muted'))
   for (const friend of friends) {
     if (party?.members?.some((member) => member.id === friend.id)) continue
     box.append(button(`Invite ${shown(friend.id, friend.username)}`, 'ghost', () => {
@@ -1104,7 +1103,11 @@ function loadDirectory() {
       state.directory.status = err.message
     }
     if (state.screen === 'directory') paintDirList()
-  }, 140)
+    if (state.screen === 'friends') {
+      const list = document.getElementById('friend-list')
+      if (list) paintFriends(list)
+    }
+  }, 200)
 }
 
 function personButton(player) {
@@ -1400,7 +1403,7 @@ async function loadFriends() {
 function friendsCard() {
   const box = card()
   box.append(h('h2', 'Friends'))
-  box.append(p('Sorted by who you played with most recently. Search to filter.'))
+  box.append(p('Search any player, or leave it blank to see friends you have played with.'))
   box.append(button(state.friendPick ? 'Cancel' : 'Invite to Match', 'ghost', () => {
     state.friendPick = !state.friendPick
     state.picked = []
@@ -1420,12 +1423,21 @@ function friendsCard() {
   }
   const search = document.createElement('input')
   search.type = 'search'
-  search.placeholder = 'Search friends'
+  search.placeholder = 'Search players'
   search.value = state.friends?.q || ''
   search.addEventListener('input', () => {
     state.friends = { ...(state.friends || { list: [] }), q: search.value }
+    state.directory.q = search.value
     const list = document.getElementById('friend-list')
+    if (!search.value.trim()) {
+      state.directory.players = []
+      state.directory.status = ''
+      if (list) paintFriends(list)
+      return
+    }
+    state.directory.status = 'Searching…'
     if (list) paintFriends(list)
+    loadDirectory()
   })
   const list = document.createElement('div')
   list.id = 'friend-list'
@@ -1441,9 +1453,45 @@ function friendsCard() {
 function paintFriends(list) {
   list.replaceChildren()
   const q = (state.friends?.q || '').trim().toLowerCase()
+  if (q) {
+    if (state.directory.status === 'Searching…' && !state.directory.players.length) {
+      list.append(p('Searching…', 'muted'))
+      return
+    }
+    const hits = state.directory.players || []
+    if (!hits.length) {
+      list.append(p(state.directory.status && state.directory.status !== 'Searching…' ? state.directory.status : 'No accounts match.', 'muted'))
+      return
+    }
+    for (const player of hits) {
+      const row = document.createElement('div')
+      row.className = 'member'
+      const name = document.createElement('b')
+      name.append(onlineDot(player.online), document.createTextNode(shown(player.id, player.username)))
+      name.addEventListener('click', () => openPlayer(player))
+      const meta = document.createElement('span')
+      meta.className = 'muted'
+      meta.textContent = `${player.rank} · ${player.goals} goals`
+      row.append(name, meta)
+      if (player.id !== state.me?.id && player.friend !== 'accepted') {
+        const label = player.friend === 'incoming' ? 'Accept' : player.friend === 'pending' ? 'Requested' : 'Add friend'
+        row.append(button(label, player.friend === 'incoming' ? 'primary' : 'ghost', async () => {
+          if (player.friend === 'pending') return
+          try {
+            const data = await api('/api/friends', { username: player.username })
+            player.friend = data.accepted ? 'accepted' : 'pending'
+            toast(data.accepted ? `You and ${player.username} are friends` : `Asked ${player.username}`)
+            paintFriends(list)
+          } catch (err) { toast(err.message) }
+        }))
+      }
+      list.append(row)
+    }
+    return
+  }
   const rows = (state.friends?.list || []).filter((f) => !q || f.username.toLowerCase().includes(q))
   if (!rows.length) {
-    list.append(p(q ? 'No friend with that name.' : 'No friends yet. Add one from Find players.', 'muted'))
+    list.append(p('No friends yet. Search for a player above.', 'muted'))
     return
   }
   for (const friend of rows) {
