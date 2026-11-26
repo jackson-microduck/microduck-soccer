@@ -1410,13 +1410,13 @@ function friendsCard() {
     render()
   }))
   if (state.friendPick) {
-    box.append(p('Pick up to 2 friends.', 'muted'))
+    box.append(p('Pick up to 7 friends.', 'muted'))
     box.append(button('Make Match', 'primary', () => {
       if (!state.picked.length) {
-        toast('Pick up to 2 friends.')
+        toast('Pick up to 7 friends.')
         return
       }
-      send({ t: 'friend-match', ids: state.picked.slice(0, 2) })
+      send({ t: 'friend-match', ids: state.picked.slice(0, 7) })
       state.friendPick = false
       state.picked = []
     }))
@@ -1509,7 +1509,7 @@ function paintFriends(list) {
     if (state.friendPick) {
       row.append(button(picked ? 'Selected' : 'Select', picked ? 'primary' : 'ghost', () => {
         if (picked) state.picked = state.picked.filter((id) => id !== friend.id)
-        else if (state.picked.length >= 2) toast('You can invite 2 friends.')
+        else if (state.picked.length >= 7) toast('You can invite 7 friends.')
         else state.picked = [...state.picked, friend.id]
         paintFriends(list)
       }))

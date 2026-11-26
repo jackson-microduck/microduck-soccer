@@ -173,7 +173,7 @@ export function createHub(db) {
     return {
       t: 'room',
       code: room.code,
-      mode: room.mode,
+      mode: modeForSide(Math.ceil(room.players.length / 2)),
       minutes: room.minutes,
       hostId: room.hostId,
       clubOnly: !!room.clubId,
@@ -916,7 +916,7 @@ export function createHub(db) {
       return fail(conn, 'They are not in a match or party.')
     }
     if (msg.t === 'friend-match') {
-      const ids = [...new Set((msg.ids || []).map((id) => Number(id)).filter((id) => id && id !== conn.user.id))].slice(0, 2)
+      const ids = [...new Set((msg.ids || []).map((id) => Number(id)).filter((id) => id && id !== conn.user.id))].slice(0, 7)
       if (!ids.length) return fail(conn, 'Pick a friend.')
       if (conn.matchId) return fail(conn, 'You are already in a match.')
       const rows = await db.prepare(`SELECT CASE WHEN user_id = ? THEN friend_id ELSE user_id END AS id

@@ -44,6 +44,17 @@ export function modeForSide(perTeam) {
   return MODE_BY_SIDE[n - 1]
 }
 
+export function fieldSize(mode, playerCount) {
+  const spec = MODES[mode]
+  const n = playerCount || spec.players
+  if (n < 4) return { length: spec.length, width: spec.width }
+  const extra = n - 3
+  return {
+    length: Math.round((spec.length + extra * 0.45) * 100) / 100,
+    width: Math.round((spec.width + extra * 0.28) * 100) / 100,
+  }
+}
+
 export const EMOTES = ['spin', 'quack', 'bob', 'sit', 'glide']
 export const START_RATING = 1000
 
@@ -229,8 +240,8 @@ export function createMatch({
     duration: minutes * 60,
     clock: minutes * 60,
     elapsed: 0,
-    length: spec.length,
-    width: spec.width,
+    length: fieldSize(mode, players.length).length,
+    width: fieldSize(mode, players.length).width,
     goalW: GOAL_W,
     goalH: GOAL_H,
     ranked,
